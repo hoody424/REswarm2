@@ -202,6 +202,43 @@ def cmd_template(args):
     return 0
 
 
+def cmd_theme(args):
+    from .theme_generator import THEME_PRESETS
+    from .image import convert_to_rgb565
+    from .device import KB7Device, SLOT_BACKGROUND
+
+    if args.list:
+        print("Available Display Themes:")
+        print("  - tactical_hud     : Sci-Fi / Cyberpunk Tactical Cockpit (Cyan & Amber)")
+        print("  - audiophile_dark  : Studio Mixing Console & Analog VU Meter Deck (Gold & Charcoal)")
+        print("  - neon_cyberpunk   : Synthwave Cyberdeck (Electric Magenta & Cyan)")
+        return 0
+
+    name = (args.name or "tactical_hud").lower()
+    if name not in THEME_PRESETS:
+        print(f"[!] Unknown theme '{name}'. Available: {list(THEME_PRESETS.keys())}")
+        return 1
+
+    print(f"[*] Rendering theme '{name}' at 800x480...")
+    img = THEME_PRESETS[name]()
+
+    if args.save:
+        out_file = args.save if isinstance(args.save, str) and args.save != "true" else f"{name}.png"
+        img.save(out_file)
+        print(f"[+] Saved theme image to {out_file}")
+
+    print("[*] Converting to RGB565 and uploading to KB7 Display (SLOT_BACKGROUND)...")
+    rgb565 = convert_to_rgb565(img)
+    with KB7Device() as dev:
+        def cb(sent, total):
+            pct = sent * 100 // total
+            if sent % (total // 10) < 64:
+                print(f"Progress: {sent}/{total} ({pct}%)")
+        dev.upload_image(rgb565, slot_id=SLOT_BACKGROUND, progress_callback=cb)
+        print(f"[+] Theme '{name}' uploaded and active on KB7 display!")
+    return 0
+
+
 def cmd_assign(args):
     with KB7Device() as dev:
         page = args.page
@@ -346,6 +383,13 @@ def main():
     p_mixer.add_argument("--mute-app", help="Application name to toggle mute")
     p_mixer.add_argument("--mute-master", action="store_true", help="Toggle master device mute")
     p_mixer.set_defaults(func=cmd_mixer)
+
+    # Theme Generator & Uploader
+    p_theme = subparsers.add_parser("theme", help="Generate and apply custom HUD designs and wallpapers")
+    p_theme.add_argument("name", nargs="?", default="tactical_hud", help="Theme preset (tactical_hud, audiophile_dark, neon_cyberpunk)")
+    p_theme.add_argument("--list", action="store_true", help="List all available procedural themes")
+    p_theme.add_argument("--save", nargs="?", const="true", help="Save rendered PNG to disk")
+    p_theme.set_defaults(func=cmd_theme)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

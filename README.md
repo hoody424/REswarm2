@@ -158,6 +158,20 @@ python -m turtlebeach_kb7.cli mixer --cli --set-app Discord --volume 80
 ```
 For architecture analysis and SDK guide, see [`docs/AUDIO_MIXER.md`](docs/AUDIO_MIXER.md).
 
+### 8. Procedural Theme & HUD Designer
+Generate and upload high-resolution, pixel-perfect 800×480 custom UI designs and HUD wallpapers tailored to the KB7 display:
+```bash
+# List available procedural theme presets
+python -m turtlebeach_kb7.cli theme --list
+
+# Render and upload the Sci-Fi Tactical Cockpit theme
+python -m turtlebeach_kb7.cli theme tactical_hud
+
+# Other themes:
+python -m turtlebeach_kb7.cli theme audiophile_dark   # Studio console & analog VU meters
+python -m turtlebeach_kb7.cli theme neon_cyberpunk    # Synthwave / Cyberdeck with perspective grid
+```
+
 ---
 
 ## 🐍 Python Library Example
