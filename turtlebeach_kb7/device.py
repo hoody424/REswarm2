@@ -6,7 +6,8 @@ Pure-Python implementation using native Windows Win32 HID APIs via ctypes.
 import sys
 import time
 import struct
-from typing import Optional, Callable, Dict, Any, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Callable, Dict, Any, List, Tuple
 
 # Constants
 VID_TURTLE_BEACH = 0x10F5
@@ -22,7 +23,7 @@ USAGE_TOUCH        = 0x0001
 USAGE_PAGE_FEATURE = 0xFF03
 USAGE_FEATURE      = 0x0001
 
-# Protocol Command IDs
+# Protocol Command IDs (mi_01 Display Endpoint)
 CMD_START_UPDATE   = 0xA5
 CMD_BLOCK_READY    = 0xF1
 CMD_BLOCK_END      = 0xF2
@@ -36,21 +37,55 @@ BLOCK_SIZE         = 4096
 CHUNK_PAYLOAD_MAX  = 62
 HID_REPORT_SIZE    = 65
 
+# Feature Report Constants (mi_02 COL06 Endpoint)
+FEATURE_REQ_CMD_LCD_SETTINGS = 0xB8  # 164 bytes (Report ID 0x25)
+FEATURE_REQ_CMD_SCREEN_KEYS  = 0xB9  # 584 bytes (Report ID 0x29)
+
+REPORT_ID_LCD_SETTINGS       = 0x25
+REPORT_ID_SCREEN_KEYS        = 0x29
+REPORT_ID_SLOT_UPDATE        = 0x35
+
+LEN_LCD_SETTINGS             = 164
+LEN_SCREEN_KEYS              = 584
+LEN_SLOT_UPDATE              = 12
+
+
+@dataclass
+class ScreenKey:
+    """Represents a virtual touch key on the KB7 display (Numpad / Macro key)."""
+    index: int
+    key_code: int
+    modifiers: int
+    label: str
+
+
+@dataclass
+class LCDSettings:
+    """Represents the active display configuration of the KB7 keyboard."""
+    active_page: int
+    timeout_seconds: int
+    dim_timeout_seconds: int
+    brightness: int
+    widget_slots: List[Tuple[int, int]] = field(default_factory=list)  # (widget_type, widget_id)
+    raw: bytes = b""
+
 
 class KB7Device:
     """
-    Controller for Turtle Beach Command Series KB7 Touch Display & Events.
+    Controller for Turtle Beach Command Series KB7 Touch Display, Backlight & Events.
     """
 
     def __init__(self):
         self.display_handle = None
         self.touch_handle = None
+        self.feat_handle = None
         self.display_path: Optional[str] = None
         self.touch_path: Optional[str] = None
+        self.feat_path: Optional[str] = None
 
     def connect(self) -> bool:
         """
-        Discovers and opens handles to the KB7 Display and Touch HID interfaces.
+        Discovers and opens handles to the KB7 Display, Touch, and Feature HID interfaces.
         """
         if sys.platform != "win32":
             raise NotImplementedError("Direct Windows HID implementation currently supported.")
@@ -61,22 +96,33 @@ class KB7Device:
         if not endpoints:
             raise ConnectionError("No Turtle Beach KB7 devices (10F5:5038) found.")
 
-        # Find Display Endpoint (UsagePage 0xFF00, Usage 0x0001)
         for ep in endpoints:
-            if ep["usage_page"] == USAGE_PAGE_DISPLAY and ep["usage"] == USAGE_DISPLAY:
-                self.display_path = ep["path"]
-            elif ep["usage_page"] == USAGE_PAGE_TOUCH and ep["usage"] == USAGE_TOUCH:
-                self.touch_path = ep["path"]
+            up = ep["usage_page"]
+            u = ep["usage"]
+            path = ep["path"]
+            if up == USAGE_PAGE_DISPLAY and u == USAGE_DISPLAY:
+                self.display_path = path
+            elif up == USAGE_PAGE_TOUCH and u == USAGE_TOUCH:
+                self.touch_path = path
+            elif up == USAGE_PAGE_FEATURE and ep["feature_len"] > 0:
+                self.feat_path = path
 
         if not self.display_path:
             raise ConnectionError("Found KB7 device, but Display interface (0xFF00:0x0001) is missing.")
 
         self.display_handle = open_hid_handle(self.display_path)
+
         if self.touch_path:
             try:
                 self.touch_handle = open_hid_handle(self.touch_path)
             except Exception:
                 self.touch_handle = None
+
+        if self.feat_path:
+            try:
+                self.feat_handle = open_hid_handle(self.feat_path)
+            except Exception:
+                self.feat_handle = None
 
         return True
 
@@ -90,6 +136,9 @@ class KB7Device:
             if self.touch_handle:
                 close_handle(self.touch_handle)
                 self.touch_handle = None
+            if self.feat_handle:
+                close_handle(self.feat_handle)
+                self.feat_handle = None
 
     def __enter__(self):
         self.connect()
@@ -97,6 +146,10 @@ class KB7Device:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
+
+    # =========================================================================
+    # DISPLAY STREAMING (UsagePage 0xFF00)
+    # =========================================================================
 
     def _write_and_read(self, payload: bytes) -> bytes:
         """
@@ -201,6 +254,10 @@ class KB7Device:
 
         return True
 
+    # =========================================================================
+    # TOUCH EVENTS (UsagePage 0xFF02)
+    # =========================================================================
+
     def read_touch_event(self, timeout_ms: int = 1000) -> Optional[Dict[str, Any]]:
         """
         Polls for a touch screen event on interface mi_02 (UsagePage 0xFF02, Usage 0x0001).
@@ -229,3 +286,173 @@ class KB7Device:
             "x": x,
             "y": y,
         }
+
+    # =========================================================================
+    # FEATURE REPORTS: BACKLIGHT, SETTINGS & SCREEN KEYS (UsagePage 0xFF03)
+    # =========================================================================
+
+    def get_lcd_settings(self) -> LCDSettings:
+        """
+        Queries current LCD settings (brightness, timeout, active page, slots)
+        via Feature Command 0xB8 on UsagePage 0xFF03.
+        """
+        if not self.feat_handle:
+            raise RuntimeError("Feature interface (0xFF03) not connected.")
+
+        from .win_hid import hid_set_feature, hid_get_feature
+
+        # Request 0xB8 report preparation
+        req = bytes([0x05, 0x00, FEATURE_REQ_CMD_LCD_SETTINGS, 0x00, 0x00])
+        if not hid_set_feature(self.feat_handle, req):
+            raise IOError("Failed to send 0xB8 feature request to device.")
+
+        time.sleep(0.02)
+
+        data = hid_get_feature(self.feat_handle, REPORT_ID_LCD_SETTINGS, LEN_LCD_SETTINGS)
+        if len(data) < LEN_LCD_SETTINGS:
+            raise IOError(f"Incomplete LCDSettings response from device ({len(data)} bytes).")
+
+        active_page = int.from_bytes(data[6:10], "little")
+        timeout_sec = int.from_bytes(data[10:14], "little")
+        dim_sec     = int.from_bytes(data[14:18], "little")
+        brightness  = int.from_bytes(data[18:22], "little")
+
+        slots = []
+        for i in range(22, 162, 4):
+            w_type = int.from_bytes(data[i:i+2], "little")
+            w_id   = int.from_bytes(data[i+2:i+4], "little")
+            slots.append((w_type, w_id))
+
+        return LCDSettings(
+            active_page=active_page,
+            timeout_seconds=timeout_sec,
+            dim_timeout_seconds=dim_sec,
+            brightness=brightness,
+            widget_slots=slots,
+            raw=data
+        )
+
+    def _write_lcd_settings(self, settings_data: bytearray) -> bool:
+        """
+        Recalculates 16-bit sum checksum and writes 164-byte LCDSettings report.
+        """
+        if not self.feat_handle:
+            raise RuntimeError("Feature interface (0xFF03) not connected.")
+
+        from .win_hid import hid_set_feature
+
+        if len(settings_data) != LEN_LCD_SETTINGS:
+            raise ValueError(f"Settings buffer must be exactly {LEN_LCD_SETTINGS} bytes.")
+
+        # Checksum is sum of all bytes from index 0 to 161
+        csum = sum(settings_data[:162]) & 0xFFFF
+        settings_data[162:164] = csum.to_bytes(2, "little")
+
+        return hid_set_feature(self.feat_handle, bytes(settings_data))
+
+    def set_brightness(self, level: int) -> bool:
+        """
+        Sets screen backlight brightness (0 to 100%).
+        """
+        clamped = max(0, min(100, int(level)))
+        settings = self.get_lcd_settings()
+        buf = bytearray(settings.raw)
+        buf[18:22] = clamped.to_bytes(4, "little")
+        return self._write_lcd_settings(buf)
+
+    def set_timeout(self, seconds: int) -> bool:
+        """
+        Sets screen sleep timeout in seconds.
+        """
+        sec = max(0, int(seconds))
+        settings = self.get_lcd_settings()
+        buf = bytearray(settings.raw)
+        buf[10:14] = sec.to_bytes(4, "little")
+        return self._write_lcd_settings(buf)
+
+    def set_active_page(self, page_index: int) -> bool:
+        """
+        Sets active display page (1 to 5).
+        """
+        page = max(1, min(5, int(page_index)))
+        settings = self.get_lcd_settings()
+        buf = bytearray(settings.raw)
+        buf[6:10] = page.to_bytes(4, "little")
+        return self._write_lcd_settings(buf)
+
+    def get_screen_keys(self) -> List[ScreenKey]:
+        """
+        Queries virtual touch keys (Numpad / Macro keys) via Feature Command 0xB9.
+        """
+        if not self.feat_handle:
+            raise RuntimeError("Feature interface (0xFF03) not connected.")
+
+        from .win_hid import hid_set_feature, hid_get_feature
+
+        req = bytes([0x05, 0x00, FEATURE_REQ_CMD_SCREEN_KEYS, 0x00, 0x00])
+        if not hid_set_feature(self.feat_handle, req):
+            raise IOError("Failed to send 0xB9 feature request to device.")
+
+        time.sleep(0.02)
+
+        data = hid_get_feature(self.feat_handle, REPORT_ID_SCREEN_KEYS, LEN_SCREEN_KEYS)
+        if len(data) < LEN_SCREEN_KEYS:
+            raise IOError(f"Incomplete ScreenKeys response ({len(data)} bytes).")
+
+        keys = []
+        # Key entries start at byte offset 56 (0x38), each entry is 16 bytes
+        idx = 0
+        for off in range(56, 568, 16):
+            chunk = data[off : off + 16]
+            vk_code = chunk[0]
+            mods = chunk[1]
+            raw_label = chunk[3:16]
+            # null-terminated string
+            zero_idx = raw_label.find(b"\x00")
+            if zero_idx != -1:
+                label = raw_label[:zero_idx].decode("latin1", errors="ignore")
+            else:
+                label = raw_label.decode("latin1", errors="ignore")
+            if vk_code != 0 or label:
+                keys.append(ScreenKey(index=idx, key_code=vk_code, modifiers=mods, label=label))
+            idx += 1
+
+        return keys
+
+    def update_widget_slot(
+        self,
+        page_idx: int,
+        slot_idx: int,
+        widget_type: int,
+        widget_id: int,
+        is_last: bool = False
+    ) -> bool:
+        """
+        Sends an individual widget slot assignment update using Report ID 0x35 (12 bytes).
+        
+        Args:
+            page_idx: 0-based page index (0 to 4)
+            slot_idx: 0-based slot index (0 to 12)
+            widget_type: Widget type ID (e.g. 2, 3)
+            widget_id: Assigned widget / icon ID
+            is_last: Flag indicating last slot in update batch
+        """
+        if not self.feat_handle:
+            raise RuntimeError("Feature interface (0xFF03) not connected.")
+
+        from .win_hid import hid_set_feature
+
+        pkt = bytearray(LEN_SLOT_UPDATE)
+        pkt[0] = REPORT_ID_SLOT_UPDATE          # 0x35
+        pkt[1] = LEN_SLOT_UPDATE                # 0x0C (12)
+        pkt[2] = (page_idx + 1) & 0xFF          # 1-indexed page
+        pkt[3] = slot_idx & 0xFF                # 0-indexed slot
+        pkt[4] = 1 if is_last else 0
+        pkt[5] = 0x00
+        pkt[6:8] = (widget_type & 0xFFFF).to_bytes(2, "little")
+        pkt[8:10] = (widget_id & 0xFFFF).to_bytes(2, "little")
+
+        csum = sum(pkt[:10]) & 0xFFFF
+        pkt[10:12] = csum.to_bytes(2, "little")
+
+        return hid_set_feature(self.feat_handle, bytes(pkt))

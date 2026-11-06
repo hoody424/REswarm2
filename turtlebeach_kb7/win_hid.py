@@ -12,6 +12,13 @@ Kernel32 = ctypes.windll.kernel32
 Hid = ctypes.windll.hid
 SetupAPI = ctypes.windll.setupapi
 
+# Setup HID Function Signatures
+Hid.HidD_SetFeature.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
+Hid.HidD_SetFeature.restype = wintypes.BOOLEAN
+
+Hid.HidD_GetFeature.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
+Hid.HidD_GetFeature.restype = wintypes.BOOLEAN
+
 # Structures
 class GUID(ctypes.Structure):
     _fields_ = [
@@ -219,3 +226,24 @@ def hid_read_timeout(handle: int, length: int, timeout_ms: int = 1000) -> bytes:
         return out_data[:length]
     finally:
         Kernel32.CloseHandle(overlapped.hEvent)
+
+
+def hid_set_feature(handle: int, data: bytes) -> bool:
+    """
+    Sends an HID feature report (data[0] is Report ID).
+    """
+    buf = (ctypes.c_ubyte * len(data))(*data)
+    res = Hid.HidD_SetFeature(handle, buf, len(data))
+    return bool(res)
+
+
+def hid_get_feature(handle: int, report_id: int, length: int) -> bytes:
+    """
+    Requests an HID feature report by report ID.
+    """
+    buf = (ctypes.c_ubyte * length)()
+    buf[0] = report_id & 0xFF
+    if Hid.HidD_GetFeature(handle, buf, length):
+        return bytes(buf)
+    return b""
+

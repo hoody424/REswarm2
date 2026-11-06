@@ -76,7 +76,25 @@ sequenceDiagram
 python -m turtlebeach_kb7.cli info
 ```
 
-### 2. Stream a Custom Wallpaper
+### 2. Screen Brightness, Timeout & Page Control
+```bash
+# Query current LCD settings (Brightness, Sleep Timeout, Dim Timeout, Active Page)
+python -m turtlebeach_kb7.cli brightness
+
+# Set brightness to 80% (0-100)
+python -m turtlebeach_kb7.cli brightness 80
+
+# Set screen sleep timeout in seconds (e.g. 120s)
+python -m turtlebeach_kb7.cli timeout 120
+
+# Switch active display page (1 to 5)
+python -m turtlebeach_kb7.cli page 2
+
+# List configured virtual screen keys on the display
+python -m turtlebeach_kb7.cli keys
+```
+
+### 3. Stream a Custom Wallpaper
 ```bash
 # Upload any PNG/JPG/BMP image (automatically scaled and formatted to 800x480 RGB565)
 python -m turtlebeach_kb7.cli upload my_wallpaper.png
@@ -85,7 +103,7 @@ python -m turtlebeach_kb7.cli upload my_wallpaper.png
 python -m turtlebeach_kb7.cli upload --test-pattern
 ```
 
-### 3. Monitor Real-Time Touch Events
+### 4. Monitor Real-Time Touch Events
 ```bash
 python -m turtlebeach_kb7.cli touch
 ```
@@ -106,14 +124,20 @@ Touch Event: Type=0x33 | Gesture=up   | Slot= 1 | Coord=(412, 245) | Raw=3300019
 from turtlebeach_kb7.device import KB7Device, SLOT_BACKGROUND
 from turtlebeach_kb7.image import convert_to_rgb565
 
-# Convert image to 800x480 RGB565 Little-Endian
-rgb565_data = convert_to_rgb565("custom_screen.png", width=800, height=480)
-
-# Connect and upload
 with KB7Device() as kb7:
+    # 1. Query & adjust display settings
+    settings = kb7.get_lcd_settings()
+    print(f"Current brightness: {settings.brightness}%, Active page: {settings.active_page}")
+    kb7.set_brightness(90)
+    kb7.set_active_page(1)
+
+    # 2. Upload custom background wallpaper (800x480 RGB565)
+    rgb565_data = convert_to_rgb565("custom_screen.png", width=800, height=480)
     kb7.upload_image(rgb565_data, slot_id=SLOT_BACKGROUND)
     print("Screen successfully updated!")
 ```
+
+See [`examples/control_screen_settings.py`](examples/control_screen_settings.py) for a complete interactive demonstration.
 
 ---
 
