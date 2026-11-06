@@ -134,6 +134,18 @@ Touch Event: Type=0x33 | Gesture=move | Slot= 1 | Coord=(412, 245) | Raw=3302019
 Touch Event: Type=0x33 | Gesture=up   | Slot= 1 | Coord=(412, 245) | Raw=3300019c01f5000000000000
 ```
 
+### 6. Background Daemon & Custom Plugin SDK
+To avoid USB bus contention and keyboard freezes, launch the single-writer daemon:
+```bash
+# Start background hardware daemon (TCP 127.0.0.1:27878)
+python -m turtlebeach_kb7.cli daemon
+```
+Custom plugins can connect via the client SDK to assign widgets and subscribe to touch gestures:
+```bash
+python examples/plugin_interactive_touch.py
+```
+For complete daemon IPC specification and plugin creation guide, see [`docs/DAEMON_API.md`](docs/DAEMON_API.md).
+
 ---
 
 ## 🐍 Python Library Example
@@ -160,6 +172,7 @@ See [`examples/control_screen_settings.py`](examples/control_screen_settings.py)
 ---
 
 ## 📚 Detailed Documentation
+* [`docs/DAEMON_API.md`](docs/DAEMON_API.md): Single-writer hardware daemon, JSON-over-TCP IPC protocol, and plugin SDK.
 * [`docs/PROTOCOL.md`](docs/PROTOCOL.md): Complete USB HID packet specifications, timings, and error states.
 * [`docs/HARDWARE.md`](docs/HARDWARE.md): Deep-dive into the Sonix SNC73xx + Artery AT423 dual-MCU architecture.
 * [`docs/INTERFACES.md`](docs/INTERFACES.md): Detailed breakdown of all 9 HID endpoints and report descriptor parameters.

@@ -318,7 +318,7 @@ class KB7Device:
         if not hid_set_feature(self.feat_handle, req):
             raise IOError("Failed to send 0xB8 feature request to device.")
 
-        time.sleep(0.02)
+        time.sleep(0.05)  # Safe delay for firmware buffer preparation
 
         data = hid_get_feature(self.feat_handle, REPORT_ID_LCD_SETTINGS, LEN_LCD_SETTINGS)
         if len(data) < LEN_LCD_SETTINGS:
@@ -360,7 +360,9 @@ class KB7Device:
         csum = sum(settings_data[:162]) & 0xFFFF
         settings_data[162:164] = csum.to_bytes(2, "little")
 
-        return hid_set_feature(self.feat_handle, bytes(settings_data))
+        res = hid_set_feature(self.feat_handle, bytes(settings_data))
+        time.sleep(0.1)  # Inter-packet pacing delay matching official Swarm II timing
+        return bool(res)
 
     def set_brightness(self, level: int) -> bool:
         """

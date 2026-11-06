@@ -215,6 +215,15 @@ def cmd_assign(args):
     return 0
 
 
+def cmd_daemon(args):
+    from .daemon import run_daemon
+    print("==================================================")
+    print(" Turtle Beach Command Series KB7 Hardware Daemon")
+    print("==================================================")
+    run_daemon(host=args.host, port=args.port)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Turtle Beach Command Series KB7 Touch Display & HID Reverse Engineering Tool"
@@ -275,6 +284,12 @@ def main():
     p_assign.add_argument("slot", type=int, help="Slot index (0-12)")
     p_assign.add_argument("app_id", type=int, help="Widget AppID (e.g. 1006 for CPU, 1007 for GPU)")
     p_assign.set_defaults(func=cmd_assign)
+
+    # Daemon
+    p_daemon = subparsers.add_parser("daemon", help="Run background single-writer hardware daemon for plugins")
+    p_daemon.add_argument("--host", default="127.0.0.1", help="Bind IP address (default: 127.0.0.1)")
+    p_daemon.add_argument("--port", type=int, default=27878, help="TCP port (default: 27878)")
+    p_daemon.set_defaults(func=cmd_daemon)
 
     args = parser.parse_args()
     sys.exit(args.func(args))
