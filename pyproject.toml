@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turtlebeach-kb7"
+version = "1.0.0"
+description = "Reverse engineered USB HID protocol and driver library for the Turtle Beach Command Series KB7 Touch Display"
+readme = "README.md"
+authors = [{ name = "Reverse Engineering Findings" }]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+keywords = ["turtle-beach", "kb7", "usb-hid", "reverse-engineering", "touch-display", "lvgl"]
+dependencies = [
+    "pillow>=9.0.0",
+]
+
+[project.scripts]
+tb-kb7 = "turtlebeach_kb7.cli:main"
