@@ -50,6 +50,17 @@ LEN_SCREEN_KEYS              = 584
 LEN_SLOT_UPDATE              = 12
 
 
+GESTURES = {
+    0: "up",
+    1: "down",
+    2: "move",
+    3: "tap",
+    4: "long_press",
+    5: "swipe_left",
+    6: "swipe_right"
+}
+
+
 @dataclass
 class ScreenKey:
     """Represents a virtual touch key on the KB7 display (Numpad / Macro key)."""
@@ -281,7 +292,8 @@ class KB7Device:
         return {
             "raw": report.hex(),
             "event_type": event_type,
-            "gesture": "down" if sub_type == 1 else ("move" if sub_type == 2 else "up"),
+            "gesture": GESTURES.get(sub_type, f"gesture_0x{sub_type:02x}"),
+            "sub_type": sub_type,
             "slot_id": slot_id,
             "x": x,
             "y": y,
@@ -456,3 +468,32 @@ class KB7Device:
         pkt[10:12] = csum.to_bytes(2, "little")
 
         return hid_set_feature(self.feat_handle, bytes(pkt))
+
+    def apply_template(self, page_idx: int, template_name: str) -> bool:
+        """
+        Applies a predefined layout template (e.g. 'numpad', 'telemetry', 'productivity')
+        to the specified display page (0 to 4).
+        """
+        from .widgets import LAYOUT_TEMPLATES, lookup_widget
+
+        template = LAYOUT_TEMPLATES.get(template_name.lower())
+        if not template:
+            raise ValueError(f"Unknown template '{template_name}'. Available: {list(LAYOUT_TEMPLATES.keys())}")
+
+        total = len(template)
+        for idx, app_id in enumerate(template):
+            is_last = (idx == total - 1)
+            # Default widget type: Type 3 for buttons/keys, Type 2 for telemetry
+            widget_def = lookup_widget(app_id)
+            w_type = 2 if widget_def.runtime_update else 3
+            self.update_widget_slot(
+                page_idx=page_idx,
+                slot_idx=idx,
+                widget_type=w_type,
+                widget_id=app_id,
+                is_last=is_last
+            )
+            # 100 ms delay matching the official firmware communication timing
+            time.sleep(0.1)
+
+        return True

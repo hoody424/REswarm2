@@ -94,7 +94,25 @@ python -m turtlebeach_kb7.cli page 2
 python -m turtlebeach_kb7.cli keys
 ```
 
-### 3. Stream a Custom Wallpaper
+### 3. Display Widget Management & Layout Templates
+```bash
+# Inspect all configured widget slots across pages (with catalog names)
+python -m turtlebeach_kb7.cli slots
+
+# Filter slots on a specific page (e.g. Page 1)
+python -m turtlebeach_kb7.cli slots --page 1
+
+# List all factory layout templates (numpad, telemetry, productivity, multimedia, gaming, cs2, obs)
+python -m turtlebeach_kb7.cli templates
+
+# Apply a layout template to a display page
+python -m turtlebeach_kb7.cli template telemetry --page 2
+
+# Assign an individual widget (e.g. CPU Load AppID 1006) to Page 1, Slot 0
+python -m turtlebeach_kb7.cli assign 1 0 1006
+```
+
+### 4. Stream a Custom Wallpaper
 ```bash
 # Upload any PNG/JPG/BMP image (automatically scaled and formatted to 800x480 RGB565)
 python -m turtlebeach_kb7.cli upload my_wallpaper.png
@@ -103,7 +121,7 @@ python -m turtlebeach_kb7.cli upload my_wallpaper.png
 python -m turtlebeach_kb7.cli upload --test-pattern
 ```
 
-### 4. Monitor Real-Time Touch Events
+### 5. Monitor Real-Time Touch Events
 ```bash
 python -m turtlebeach_kb7.cli touch
 ```

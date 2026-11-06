@@ -230,3 +230,99 @@ During live operation, real-time widget data (CPU %, GPU %, RAM %, Volume %, Med
 * Sent as 6 consecutive 65-byte output reports (`[0x00, data[0..63]]`) totaling 360 bytes ($5 \times 64 + 40 = 360\text{ bytes}$).
 * Values are normalized floating-point telemetry values scaled to `0..100` or `0..255` integers.
 * The device returns a 64-byte ACK for each chunk.
+
+---
+
+## 9. Touch Digitizer & Multi-Touch Gesture Protocol (`mi_02&COL04`)
+
+Touch input is captured on interface `mi_02`, Collection `COL04` (`UsagePage 0xFF02`, `Usage 0x0001`).
+Incoming reports are **12-byte HID Input Reports**.
+
+The firmware filters incoming reports using a 64-bit bitmask `0x0008800000000008` which accepts three specific Report IDs:
+1. `0x33`: Capacitive Touch Digitizer Events (press, motion, release, gestures).
+2. `0x03`: Integrated Multimedia Dial / Rotary Wheel events.
+3. `0x2F`: Display Power & Sleep/Wake status events.
+
+### 9.1 Report ID `0x33` Packet Layout (12 Bytes)
+
+| Offset | Type | Field | Description |
+| :--- | :--- | :--- | :--- |
+| `0x00` | uint8 | Report ID | Fixed `0x33` |
+| `0x01` | uint8 | Gesture Sub-Type | `0x00` = UP (Release)<br>`0x01` = DOWN (Touch Start)<br>`0x02` = MOVE (Drag / Motion)<br>`0x03` = TAP (Click)<br>`0x04` = LONG PRESS<br>`0x05` = SWIPE LEFT (Previous page)<br>`0x06` = SWIPE RIGHT (Next page) |
+| `0x02` | uint8 | Slot Index | Target widget slot on the active page (0 to 12) |
+| `0x03..0x04` | uint16 LE | X Coordinate | Horizontal touch position ($0 \le X < 800$) |
+| `0x05..0x06` | uint16 LE | Y Coordinate | Vertical touch position ($0 \le Y < 480$) |
+| `0x07..0x0B` | 5 bytes | Reserved | Zero padding (`0x0000000000`) |
+
+---
+
+## 10. Touch Screen Widget Ecosystem & Application IDs
+
+The KB7 display firmware divides each page into a **3×4 grid** (12 standard tiles) plus **1 wide bottom/slider slot** (Slot 12).
+
+Widgets can be:
+* **Interactive Buttons / Macro Keys** (Type `3`): Virtual keys, app shortcuts, media controls.
+* **Dynamic Telemetry Widgets** (Type `2`): Live updating gauges (CPU, GPU, RAM, battery, game HUD).
+
+### Complete Application ID Map
+
+| App ID | Widget Name | Category | Tile Size | Telemetry | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `0` | None / Empty | - | 1x1 | No | Unassigned slot |
+| `1` | Numpad 0 | Screen Keys | 2x1 | No | Wide 2-slot key |
+| `2..10`| Numpad 1 to 9 | Screen Keys | 1x1 | No | Standard numeric keys |
+| `11` | Numpad . (Dot) | Screen Keys | 1x1 | No | Decimal point |
+| `12..14`| Print, Scroll, Break | Screen Keys | 1x1 | No | Top navigation cluster |
+| `15..20`| Ins, Home, End, Del, PgUp, PgDn | Screen Keys | 1x1 | No | 6-key navigation cluster |
+| `21..23`| Numpad +, -, NumLock | Screen Keys | 1x1 | No | Arithmetic operators |
+| `25` | Speaker Mute | Audio | 1x1 | Yes | Toggles mute state |
+| `26` | Screenshot | Shortcuts | 1x1 | No | Win+Shift+S snipping |
+| `27..28`| GameBar ScreenShot, GameBar | Windows | 1x1 | No | Xbox Game Bar shortcuts |
+| `29..30`| Lock PC, Shutdown | Windows | 1x1 | No | Windows power controls |
+| `31..33`| Emoji, Copy, Paste | Shortcuts | 1x1 | No | Clipboard & emoji |
+| `34..36`| Browser, Back, Forward | Shortcuts | 1x1 | No | Web navigation |
+| `37..39`| Calculator, Undo, Redo | Shortcuts | 1x1 | No | Utility keys |
+| `41` | Cut | Shortcuts | 1x1 | No | Ctrl+X |
+| `42..43`| Media Controls | Multimedia | 3x1 | No | Wide playback controls |
+| `44` | RGB Brightness Slider | Hardware | 3x1 | No | Keyboard backlighting |
+| `45` | Screen Brightness Slider | Hardware | 3x1 | No | LCD backlight level |
+| `46` | REACTAP Setting | Hardware | 1x1 | No | Magnetic Rapid Trigger |
+| `50` | Screen Timeout Setting | Hardware | 1x1 | No | Sleep timer adjustment |
+| `56..57`| Play/Pause, Volume Mute | Multimedia | 1x1 | No | Discrete media keys |
+| `1002..1005`| Open Web, App, File, Folder | Launchers | 1x1 | No | User-configured links |
+| `1006` | CPU Usage | Telemetry | 1x1 | **Yes (%)** | Real-time CPU % |
+| `1007` | GPU Usage | Telemetry | 1x1 | **Yes (%)** | Real-time GPU % |
+| `1008` | CPU Temperature | Telemetry | 1x1 | **Yes (°C)** | Package temp |
+| `1009` | GPU Temperature | Telemetry | 1x1 | **Yes (°C)** | Die temp |
+| `1010` | RAM Usage | Telemetry | 1x1 | **Yes (%)** | Memory load % |
+| `1011..1012`| Mouse DPI +, DPI - | Device Control | 1x1 | No | Mouse DPI stepping |
+| `1014` | Mouse Battery | Device Control | 1x1 | **Yes (%)** | Battery level |
+| `1016` | Headset Battery | Device Control | 1x1 | **Yes (%)** | Battery level |
+| `1024..1026`| Media Slider / Scrub Bar | Multimedia | 3x1 | No | Interactive scrub bar |
+| `1028` | Custom Macro | Tools | 1x1 | No | User macro sequence |
+| `1030` | Countdown Timer | Tools | 1x1 | **Yes** | Live gaming timer |
+| `3002..3008`| Discord PTT, Mute, Channels | Discord | 1x1 | No | Discord voice controls |
+| `3100..3110`| CS2 HUD (Health, Armor, Ammo) | CS2 HUD | 1x1 | **Yes** | Live CS2 Game State |
+| `3401..3407`| OBS Stream, Record, Studio | OBS Studio | 1x1 | **Yes** | OBS Studio controls |
+
+---
+
+## 11. Built-in Layout Templates
+
+The KB7 firmware includes 16 factory layout templates for the 12-tile screen grid:
+* **`numpad`**: Virtual 10-key numeric keypad + navigation.
+* **`telemetry`**: CPU Load/Temp, GPU Load/Temp, RAM %, Mouse/Headset battery, Brightness sliders.
+* **`productivity`**: Copy/Paste/Cut, Browser Back/Forward, Calculator, Undo/Redo, Screenshot.
+* **`multimedia`**: 3x1 Volume slider, Play/Pause/Skip, 3x1 Scrub bar, Mute/Shuffle.
+* **`gaming`**: GameBar, 30s Replay record, Timers, CPU/GPU temps, Mouse DPI controls.
+* **`cs2`**: Counter-Strike 2 live health, armor, ammo count, rounds won/lost, KDA.
+* **`obs`**: OBS streaming toggle, recording toggle, pause, studio mode, scenes.
+
+---
+
+## 12. Per-Key RGB Lighting Protocol (`mi_01`, 360 Bytes)
+
+The keyboard backlighting is updated at 20–33 Hz via 65-byte Output Reports on `mi_01`:
+* **Payload Size:** 360 bytes ($120\text{ keys} \times 3\text{ channels} = 360\text{ bytes}$).
+* **Color Order:** 1 byte Red PWM, 1 byte Green PWM, 1 byte Blue PWM per switch LED.
+* **Transport:** 6 consecutive 65-byte packets (`[0x00, data[0..63]]`), ACKed after each chunk.

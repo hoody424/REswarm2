@@ -11,12 +11,14 @@ try:
     from .device import KB7Device, SLOT_BACKGROUND
     from .image import convert_to_rgb565, create_test_pattern
     from .win_hid import enumerate_kb7_endpoints
+    from .widgets import WIDGET_CATALOG, LAYOUT_TEMPLATES, lookup_widget
 except ImportError:
     # Allow running directly as a standalone script
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from turtlebeach_kb7.device import KB7Device, SLOT_BACKGROUND
     from turtlebeach_kb7.image import convert_to_rgb565, create_test_pattern
     from turtlebeach_kb7.win_hid import enumerate_kb7_endpoints
+    from turtlebeach_kb7.widgets import WIDGET_CATALOG, LAYOUT_TEMPLATES, lookup_widget
 
 
 def cmd_info(args):
@@ -158,6 +160,61 @@ def cmd_keys(args):
     return 0
 
 
+def cmd_slots(args):
+    with KB7Device() as dev:
+        settings = dev.get_lcd_settings()
+        print("==================================================")
+        print(f" Display Widget Slots (Active Page: {settings.active_page})")
+        print("==================================================")
+        slots = settings.widget_slots
+        # 35 slots across 5 pages (7 slots/page configured in settings table)
+        for i, (w_type, w_id) in enumerate(slots):
+            page_num = (i // 7) + 1
+            slot_on_page = i % 7
+            if args.page and page_num != args.page:
+                continue
+            w_def = lookup_widget(w_id)
+            status_desc = f"{w_def.name} ({w_def.category})" if w_id != 0 else "(Empty)"
+            rt = "[Telemetry]" if w_def.runtime_update else ""
+            print(f"  Page {page_num} Slot {slot_on_page} (Idx {i:02d}): Type={w_type:2d}, AppID={w_id:4d} -> {status_desc} {rt}")
+    return 0
+
+
+def cmd_templates(args):
+    print("==================================================")
+    print(" Predefined KB7 Layout Templates")
+    print("==================================================")
+    for name, slot_apps in LAYOUT_TEMPLATES.items():
+        print(f"\nTemplate '{name}':")
+        for idx, app_id in enumerate(slot_apps):
+            w = lookup_widget(app_id)
+            print(f"  Slot {idx:02d}: {w.name:<25} ({w.category})")
+    return 0
+
+
+def cmd_template(args):
+    with KB7Device() as dev:
+        name = args.name.lower()
+        page = args.page
+        print(f"[*] Applying template '{name}' to Page {page}...")
+        dev.apply_template(page - 1, name)
+        print(f"[+] Successfully applied template '{name}' to Page {page}!")
+    return 0
+
+
+def cmd_assign(args):
+    with KB7Device() as dev:
+        page = args.page
+        slot = args.slot
+        app_id = args.app_id
+        w_def = lookup_widget(app_id)
+        w_type = 2 if w_def.runtime_update else 3
+        print(f"[*] Assigning Widget {w_def.name} (AppID {app_id}, Type {w_type}) to Page {page}, Slot {slot}...")
+        dev.update_widget_slot(page - 1, slot, w_type, app_id, is_last=True)
+        print(f"[+] Widget assigned successfully!")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Turtle Beach Command Series KB7 Touch Display & HID Reverse Engineering Tool"
@@ -196,6 +253,28 @@ def main():
     # Keys
     p_keys = subparsers.add_parser("keys", help="List virtual touch screen keys")
     p_keys.set_defaults(func=cmd_keys)
+
+    # Slots
+    p_slots = subparsers.add_parser("slots", help="List configured widget slots across pages")
+    p_slots.add_argument("--page", type=int, help="Filter by page number (1-5)")
+    p_slots.set_defaults(func=cmd_slots)
+
+    # Templates
+    p_tmpls = subparsers.add_parser("templates", help="List all available predefined layout templates")
+    p_tmpls.set_defaults(func=cmd_templates)
+
+    # Apply Template
+    p_tmpl = subparsers.add_parser("template", help="Apply a predefined layout template to a display page")
+    p_tmpl.add_argument("name", help="Template name (e.g. numpad, telemetry, productivity, multimedia, gaming, cs2, obs)")
+    p_tmpl.add_argument("--page", type=int, default=1, help="Target page number (1-5, default: 1)")
+    p_tmpl.set_defaults(func=cmd_template)
+
+    # Assign Widget
+    p_assign = subparsers.add_parser("assign", help="Assign a specific widget AppID to a page & slot")
+    p_assign.add_argument("page", type=int, help="Page number (1-5)")
+    p_assign.add_argument("slot", type=int, help="Slot index (0-12)")
+    p_assign.add_argument("app_id", type=int, help="Widget AppID (e.g. 1006 for CPU, 1007 for GPU)")
+    p_assign.set_defaults(func=cmd_assign)
 
     args = parser.parse_args()
     sys.exit(args.func(args))
