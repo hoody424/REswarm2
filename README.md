@@ -146,6 +146,18 @@ python examples/plugin_interactive_touch.py
 ```
 For complete daemon IPC specification and plugin creation guide, see [`docs/DAEMON_API.md`](docs/DAEMON_API.md).
 
+### 7. Universal Windows Sound Display & Audio Mixer
+Replaces the missing/broken Swarm II sound mixer and Windows 11 hidden controls with full per-app volume sliders across all audio endpoints (including SteelSeries Sonar, Voicemeeter, and USB headsets):
+```bash
+# Launch Dark Mode Desktop Audio Mixer (with KB7 Knob / Touch synchronization)
+python -m turtlebeach_kb7.cli mixer
+
+# Or inspect and control volume via terminal
+python -m turtlebeach_kb7.cli mixer --cli
+python -m turtlebeach_kb7.cli mixer --cli --set-app Discord --volume 80
+```
+For architecture analysis and SDK guide, see [`docs/AUDIO_MIXER.md`](docs/AUDIO_MIXER.md).
+
 ---
 
 ## 🐍 Python Library Example
@@ -172,6 +184,7 @@ See [`examples/control_screen_settings.py`](examples/control_screen_settings.py)
 ---
 
 ## 📚 Detailed Documentation
+* [`docs/AUDIO_MIXER.md`](docs/AUDIO_MIXER.md): Universal Windows Sound Display, per-app WASAPI control, and KB7 knob integration.
 * [`docs/DAEMON_API.md`](docs/DAEMON_API.md): Single-writer hardware daemon, JSON-over-TCP IPC protocol, and plugin SDK.
 * [`docs/PROTOCOL.md`](docs/PROTOCOL.md): Complete USB HID packet specifications, timings, and error states.
 * [`docs/HARDWARE.md`](docs/HARDWARE.md): Deep-dive into the Sonix SNC73xx + Artery AT423 dual-MCU architecture.

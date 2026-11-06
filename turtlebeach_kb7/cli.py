@@ -224,6 +224,53 @@ def cmd_daemon(args):
     return 0
 
 
+def cmd_mixer(args):
+    from .audio_mixer import UniversalAudioMixer
+
+    mixer = UniversalAudioMixer()
+
+    if args.cli:
+        default_dev = mixer.get_default_device()
+        print("==================================================")
+        print(" Turtle Beach KB7 - Windows Audio Mixer (CLI)")
+        print("==================================================")
+        if default_dev:
+            print(f"Master Output: {default_dev.name}")
+            print(f"Master Volume: {default_dev.volume}% | Muted: {default_dev.muted}")
+        print("--------------------------------------------------")
+
+        # Handle command-line volume updates if specified
+        if args.set_app and args.volume is not None:
+            ok = mixer.set_app_volume(args.set_app, args.volume)
+            print(f"[*] Set volume of '{args.set_app}' to {args.volume}%: {'Success' if ok else 'App not found'}")
+            return 0
+        elif args.mute_app:
+            new_m = mixer.toggle_app_mute(args.mute_app)
+            print(f"[*] Toggled mute for '{args.mute_app}': New state = {new_m}")
+            return 0
+        elif args.mute_master and default_dev:
+            new_m = default_dev.toggle_mute()
+            print(f"[*] Toggled master mute: New state = {new_m}")
+            return 0
+
+        # Print distinct application table
+        apps = mixer.get_grouped_apps()
+        print(f"{'Application':<22} | {'Volume':<7} | {'Muted':<6} | {'Target Audio Device(s)'}")
+        print("-" * 75)
+        for a in apps:
+            m_str = "YES" if a.muted else "no"
+            devs = ", ".join(d[:22] for d in a.devices[:2])
+            print(f"{a.name:<22} | {a.volume:>5d}% | {m_str:<6} | {devs}")
+        print("--------------------------------------------------")
+        print("Tip: Run without --cli to launch the interactive Dark Mode GUI.")
+        return 0
+
+    # Launch GUI
+    from .mixer_gui import run_mixer_gui
+    run_mixer_gui()
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Turtle Beach Command Series KB7 Touch Display & HID Reverse Engineering Tool"
@@ -290,6 +337,15 @@ def main():
     p_daemon.add_argument("--host", default="127.0.0.1", help="Bind IP address (default: 127.0.0.1)")
     p_daemon.add_argument("--port", type=int, default=27878, help="TCP port (default: 27878)")
     p_daemon.set_defaults(func=cmd_daemon)
+
+    # Audio Mixer
+    p_mixer = subparsers.add_parser("mixer", help="Launch universal Windows Sound Display & Volume Controller")
+    p_mixer.add_argument("--cli", action="store_true", help="Display volume mixer table in terminal instead of GUI")
+    p_mixer.add_argument("--set-app", help="Application name to set volume for (e.g. Discord, Steam)")
+    p_mixer.add_argument("--volume", type=int, help="Volume percentage (0-100)")
+    p_mixer.add_argument("--mute-app", help="Application name to toggle mute")
+    p_mixer.add_argument("--mute-master", action="store_true", help="Toggle master device mute")
+    p_mixer.set_defaults(func=cmd_mixer)
 
     args = parser.parse_args()
     sys.exit(args.func(args))
