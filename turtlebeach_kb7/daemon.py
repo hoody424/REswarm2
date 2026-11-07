@@ -242,8 +242,8 @@ class KB7Daemon:
                 page_filter = req.get("page")
                 results = []
                 for i, (w_type, w_id) in enumerate(settings.widget_slots):
-                    p_num = (i // 7) + 1
-                    s_idx = i % 7
+                    p_num = (i // 12) + 1
+                    s_idx = i % 12
                     if page_filter is not None and p_num != page_filter:
                         continue
                     w_def = lookup_widget(w_id)
@@ -258,6 +258,10 @@ class KB7Daemon:
                         "runtime_update": w_def.runtime_update
                     })
                 return {"status": "ok", "slots": results}
+
+            elif cmd == "restore_factory_layout":
+                ok = self.device.restore_factory_layout()
+                return {"status": "ok" if ok else "error"}
 
             elif cmd == "get_keys":
                 keys = self.device.get_screen_keys()

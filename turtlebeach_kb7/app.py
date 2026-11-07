@@ -467,7 +467,7 @@ class KB7CommandCenterApp:
         right = tk.Frame(content, bg=COLOR_BG_CARD, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        lbl_prev_title = tk.Label(right, text="DISPLAY PREVIEW (800 x 480 WVGA)", font=("Segoe UI", 10, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD)
+        lbl_prev_title = tk.Label(right, text="DISPLAY PREVIEW (480 x 800 PORTRAIT STRIDE)", font=("Segoe UI", 10, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD)
         lbl_prev_title.pack(anchor="w", padx=20, pady=(16, 8))
 
         # Preview Image Frame
@@ -480,7 +480,7 @@ class KB7CommandCenterApp:
 
         self.var_switch_clean_page = tk.BooleanVar(value=False)
         cb_clean = tk.Checkbutton(
-            opt_bar, text="Nach Upload auf leere Seite 5 wechseln",
+            opt_bar, text="Nach Upload auf Seite 3 wechseln",
             variable=self.var_switch_clean_page,
             font=("Segoe UI", 9), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
             selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD, activeforeground=COLOR_TEXT_MAIN
@@ -488,7 +488,7 @@ class KB7CommandCenterApp:
         cb_clean.pack(side=tk.LEFT)
 
         btn_reset_theme = tk.Button(
-            opt_bar, text="↺ Werkseinstellung Hintergrund", font=("Segoe UI", 8),
+            opt_bar, text="↺ Werkseinstellung Hintergrund & Kacheln", font=("Segoe UI", 8),
             bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MUTED, bd=0, padx=8, pady=3, cursor="hand2",
             command=self._reset_factory_theme
         )
@@ -592,9 +592,14 @@ class KB7CommandCenterApp:
                 gen_fn = THEME_PRESETS.get(preset, THEME_PRESETS["tactical_hud"])
                 im = gen_fn()
 
-            # Scale to fit GUI preview (e.g. 520x312)
-            preview_im = im.resize((520, 312), Image.Resampling.LANCZOS)
-            self.preview_image_tk = ImageTk.PhotoImage(preview_im)
+            # Preserve exact aspect ratio of the 480x800 portrait framebuffer inside a 520x312 preview canvas
+            canvas = Image.new("RGB", (520, 312), (8, 12, 20))
+            im_copy = im.copy()
+            im_copy.thumbnail((520, 312), Image.Resampling.LANCZOS)
+            ox = (520 - im_copy.width) // 2
+            oy = (312 - im_copy.height) // 2
+            canvas.paste(im_copy, (ox, oy))
+            self.preview_image_tk = ImageTk.PhotoImage(canvas)
             self.lbl_preview.configure(image=self.preview_image_tk)
         except Exception as e:
             print(f"[!] Preview generation error: {e}")
@@ -622,24 +627,24 @@ class KB7CommandCenterApp:
                     with self.daemon.lock:
                         self.daemon.device.upload_theme(im, progress_callback=progress_cb)
                         if self.var_switch_clean_page.get():
-                            self.daemon.device.set_active_page(5)
+                            self.daemon.device.set_active_page(3)
                 elif self.client and self.hw_connected:
                     progress_cb("Sending upload command to KB7 Daemon (please wait)...", 20)
                     preset_name = None if self.custom_image_path else self.theme_var.get()
                     self.client.apply_theme(name=preset_name, path=self.custom_image_path)
                     if self.var_switch_clean_page.get():
-                        self.client.set_page(5)
+                        self.client.set_page(3)
                     progress_cb("Theme active and visible on KB7 display!", 100)
                 else:
                     with KB7Device() as dev:
                         dev.upload_theme(im, progress_callback=progress_cb)
                         if self.var_switch_clean_page.get():
-                            dev.set_active_page(5)
+                            dev.set_active_page(3)
 
                 msg = "[+] Theme active on KB7 display!"
                 if self.var_switch_clean_page.get():
-                    msg += " (Switched to clean Page 5)"
-                    self.page_var.set(5)
+                    msg += " (Switched to Page 3)"
+                    self.page_var.set(3)
 
                 if self.steelseries and self.var_ss_auto_sync.get():
                     self.steelseries.sync_theme(self.theme_var.get())
@@ -657,20 +662,21 @@ class KB7CommandCenterApp:
         self.lbl_upload_status.configure(text=msg, fg=COLOR_TEXT_MAIN)
 
     def _reset_factory_theme(self):
-        """Resets the keyboard screen to built-in factory wallpaper."""
+        """Resets the keyboard screen to built-in factory wallpaper and 12-tile layout."""
         try:
             if self.daemon and self.daemon.device:
                 with self.daemon.lock:
                     self.daemon.device.set_background_mode(0)
-                    self.daemon.device.refresh_screen()
+                    self.daemon.device.restore_factory_layout()
             elif self.client and self.hw_connected:
                 self.client.set_background_mode(0)
-                self.client.refresh_screen()
+                self.client.apply_template(page=1, template_name="factory")
             else:
                 with KB7Device() as dev:
                     dev.set_background_mode(0)
-                    dev.refresh_screen()
-            self.lbl_upload_status.configure(text="[+] Restored factory default wallpaper.", fg=COLOR_ACCENT)
+                    dev.restore_factory_layout()
+            self.refresh_slots_view()
+            self.lbl_upload_status.configure(text="[+] Restored factory default wallpaper & 12-tile layout.", fg=COLOR_ACCENT)
         except Exception as e:
             self.lbl_upload_status.configure(text=f"[!] Reset error: {e}", fg=COLOR_MUTE_ACTIVE)
 
@@ -724,9 +730,14 @@ class KB7CommandCenterApp:
         tk.Label(ctrl_bar, text="SELECT DISPLAY PAGE:", font=("Segoe UI", 10, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 8))
 
         self.page_var = tk.IntVar(value=1)
-        for p in range(1, 6):
+        page_labels = [
+            (1, "Page 1 (Home / 12 Kacheln)"),
+            (2, "Page 2 (Numpad)"),
+            (3, "Page 3 (Telemetrie & Shortcuts)"),
+        ]
+        for p, p_lbl in page_labels:
             btn_p = tk.Radiobutton(
-                ctrl_bar, text=f"Page {p}", variable=self.page_var, value=p,
+                ctrl_bar, text=p_lbl, variable=self.page_var, value=p,
                 font=("Segoe UI", 9, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
                 selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
                 command=self._on_page_changed
@@ -762,7 +773,7 @@ class KB7CommandCenterApp:
         lbl_cur = tk.Label(content, text="CONFIGURED SLOTS ON PAGE:", font=("Segoe UI", 10, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD)
         lbl_cur.pack(anchor="w", padx=16, pady=(16, 6))
 
-        self.tree_slots = ttk.Treeview(content, columns=("slot", "type", "appid", "name", "cat"), show="headings", height=8)
+        self.tree_slots = ttk.Treeview(content, columns=("slot", "type", "appid", "name", "cat"), show="headings", height=12)
         self.tree_slots.heading("slot", text="Slot")
         self.tree_slots.heading("type", text="Type")
         self.tree_slots.heading("appid", text="AppID")
@@ -783,7 +794,7 @@ class KB7CommandCenterApp:
 
         tk.Label(edit_bar, text="KACHEL ANPASSEN:", font=("Segoe UI", 9, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 8))
 
-        self.cb_slot_idx = ttk.Combobox(edit_bar, values=[f"Slot {i}" for i in range(7)], state="readonly", width=8)
+        self.cb_slot_idx = ttk.Combobox(edit_bar, values=[f"Slot {i}" for i in range(12)], state="readonly", width=8)
         self.cb_slot_idx.current(0)
         self.cb_slot_idx.pack(side=tk.LEFT, padx=4)
 
@@ -815,7 +826,7 @@ class KB7CommandCenterApp:
                     slot_str = vals[0]  # "Slot 3"
                     try:
                         idx = int(slot_str.split()[1])
-                        if 0 <= idx < 7:
+                        if 0 <= idx < 12:
                             self.cb_slot_idx.current(idx)
                     except Exception:
                         pass
@@ -898,8 +909,8 @@ class KB7CommandCenterApp:
                     settings = self.daemon.device.get_lcd_settings()
                     slots = []
                     for i, (w_type, w_id) in enumerate(settings.widget_slots):
-                        p_num = (i // 7) + 1
-                        s_idx = i % 7
+                        p_num = (i // 12) + 1
+                        s_idx = i % 12
                         if p_num != p:
                             continue
                         w_def = lookup_widget(w_id)
@@ -920,8 +931,8 @@ class KB7CommandCenterApp:
                     settings = dev.get_lcd_settings()
                     slots = []
                     for i, (w_type, w_id) in enumerate(settings.widget_slots):
-                        p_num = (i // 7) + 1
-                        s_idx = i % 7
+                        p_num = (i // 12) + 1
+                        s_idx = i % 12
                         if p_num != p:
                             continue
                         w_def = lookup_widget(w_id)

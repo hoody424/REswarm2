@@ -1,144 +1,177 @@
 """
-Image conversion utilities for Turtle Beach KB7 (800x480 RGB565 Little-Endian).
-Features:
-- High-quality Lanczos resampling
-- 4x4 Bayer ordered dithering to eliminate color banding on gradients & dark backgrounds
-- Fast branchless lookup-table RGB565 conversion
+Image conversion utilities for the Turtle Beach Command Series KB7 display.
+
+Grounded in disassembly of COMMAND_KB7.dll:
+- SetBg (0x0029D5C0):
+  - Slot 0x00 (Full Wallpaper): scales with Qt::KeepAspectRatioByExpanding to cover
+    480x800 (width=480, height=800), center-crops to 480x800, and converts via
+    LvglImageConverter (0x0023CE40 -> 0x0023C110) in Mode 0 (RGB565 Little-Endian,
+    2 bytes/pixel = 768,000 bytes).
+  - Slot 0x40 (Thumbnail): scales to 148x148, center-crops to 142x148 (width=142,
+    height=148), and converts via LvglImageConverter in Mode 1 (RGB565 Little-Endian
+    42,032 bytes + 8-bit Alpha plane 21,016 bytes = 63,048 bytes total).
 """
 
-from typing import Optional
-import struct
+from pathlib import Path
+from typing import Union
+from PIL import Image
 
-# Standard 4x4 Bayer dithering matrix (values 0..15)
-BAYER4 = (
-    0, 8, 2, 10,
-    12, 4, 14, 6,
-    3, 11, 1, 9,
-    15, 7, 13, 5
+LCD_WIDTH = 480
+LCD_HEIGHT = 800
+THUMB_WIDTH = 142
+THUMB_HEIGHT = 148
+
+# 4x4 Bayer matrix normalized to [-0.5, +0.4375] for smooth RGB565 quantization
+_BAYER_4X4 = (
+    (-8 / 16.0,  0 / 16.0, -6 / 16.0,  2 / 16.0),
+    ( 4 / 16.0, -4 / 16.0,  6 / 16.0, -2 / 16.0),
+    (-5 / 16.0,  3 / 16.0, -7 / 16.0,  1 / 16.0),
+    ( 7 / 16.0, -1 / 16.0,  5 / 16.0, -3 / 16.0),
 )
 
-# Precalculate dithering tables for fast RGB565 conversion
-# Red & Blue (5-bit, 32 levels, step=8): delta = (bayer - 7.5) * 0.5
-# Green (6-bit, 64 levels, step=4):     delta = (bayer - 7.5) * 0.25
-_DITHER_TABLE_R = bytearray(16 * 256)
-_DITHER_TABLE_G = bytearray(16 * 256)
-_DITHER_TABLE_B = bytearray(16 * 256)
 
-for _b_idx in range(16):
-    _d = BAYER4[_b_idx] - 7.5
-    _d_rb = int(round(_d * 0.5))
-    _d_g  = int(round(_d * 0.25))
-    for _v in range(256):
-        _vr = max(0, min(255, _v + _d_rb)) & 0xF8
-        _vg = max(0, min(255, _v + _d_g))  & 0xFC
-        _vb = max(0, min(255, _v + _d_rb)) >> 3
-        _DITHER_TABLE_R[_b_idx * 256 + _v] = _vr
-        _DITHER_TABLE_G[_b_idx * 256 + _v] = _vg
-        _DITHER_TABLE_B[_b_idx * 256 + _v] = _vb
-
-
-def pixel_to_rgb565_le(r: int, g: int, b: int) -> bytes:
+def scale_and_center_crop(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
     """
-    Converts 8-bit RGB values to 16-bit RGB565 in Little-Endian byte order.
-    Format:
-      R: 5 bits (bits 15..11)
-      G: 6 bits (bits 10..5)
-      B: 5 bits (bits 4..0)
+    Replicates Qt's QImage::scaled(target_w, target_h, Qt::KeepAspectRatioByExpanding,
+    Qt::SmoothTransformation) followed by center QImage::copy((w-target_w)//2, (h-target_h)//2).
     """
-    val = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-    return struct.pack("<H", val)
+    src_w, src_h = img.size
+    if (src_w, src_h) == (target_w, target_h):
+        return img
+
+    scale = max(target_w / max(1, src_w), target_h / max(1, src_h))
+    scaled_w = max(target_w, int(round(src_w * scale)))
+    scaled_h = max(target_h, int(round(src_h * scale)))
+
+    resized = img.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+    if (scaled_w, scaled_h) == (target_w, target_h):
+        return resized
+
+    left = (scaled_w - target_w) // 2
+    top = (scaled_h - target_h) // 2
+    return resized.crop((left, top, left + target_w, top + target_h))
 
 
 def convert_to_rgb565(
-    source,
-    target_width: Optional[int] = None,
-    target_height: Optional[int] = None,
-    dither: bool = True
+    image_source: Union[str, Path, Image.Image],
+    width: int = LCD_WIDTH,
+    height: int = LCD_HEIGHT,
+    byte_order: str = "little",
+    dither: bool = True,
+    crop_cover: bool = True,
+    include_alpha: bool = False,
 ) -> bytes:
     """
-    Converts an image file path, PIL Image, or raw RGB buffer into an RGB565 Little-Endian buffer.
-    Applies Bayer ordered dithering by default to eliminate color banding on gradients.
+    Convert an image file or PIL Image into raw 16-bit RGB565 bytes for the KB7 LCD.
+
+    Parameters
+    ----------
+    image_source : str | Path | PIL.Image.Image
+        Path to an image file or an already-loaded PIL Image object.
+    width : int
+        Target width in pixels (default: 480 for Slot 0x00, 142 for Slot 0x40).
+    height : int
+        Target height in pixels (default: 800 for Slot 0x00, 148 for Slot 0x40).
+    byte_order : str
+        "little" (default, matching LvglImageConverter 0x0023C110) or "big".
+    dither : bool
+        Apply 4x4 Bayer ordered dithering to eliminate RGB565 gradient banding.
+    crop_cover : bool
+        Use aspect-preserving scale + center crop (matching SetBg in COMMAND_KB7.dll).
+    include_alpha : bool
+        Append 1-byte-per-pixel alpha plane after RGB565 data (Mode 1 in
+        LvglImageConverter, required for Slot 0x40 where total size is 3 * W * H).
+
+    Returns
+    -------
+    bytes
+        Raw pixel buffer of length `width * height * 2` (or `width * height * 3`
+        when `include_alpha=True`).
     """
-    try:
-        from PIL import Image
-    except ImportError:
-        Image = None
-
-    if Image and isinstance(source, Image.Image):
-        tw = target_width if target_width is not None else source.width
-        th = target_height if target_height is not None else source.height
-        if source.size != (tw, th):
-            img = source.convert("RGB").resize((tw, th), Image.Resampling.LANCZOS)
-        else:
-            img = source.convert("RGB")
-        raw_rgb = img.tobytes()
-    elif Image and isinstance(source, str):
-        with Image.open(source) as img:
-            tw = target_width if target_width is not None else 800
-            th = target_height if target_height is not None else 480
-            img = img.convert("RGB").resize((tw, th), Image.Resampling.LANCZOS)
-            raw_rgb = img.tobytes()
-    elif isinstance(source, (bytes, bytearray)):
-        tw = target_width or 800
-        th = target_height or 480
-        expected_size = tw * th * 3
-        if len(source) == expected_size:
-            raw_rgb = bytes(source)
-        elif len(source) == tw * th * 2:
-            return bytes(source)
-        else:
-            raise ValueError(f"Raw buffer length {len(source)} does not match RGB888 ({expected_size}) or RGB565")
+    if isinstance(image_source, (str, Path)):
+        img = Image.open(image_source)
+    elif isinstance(image_source, Image.Image):
+        img = image_source.copy()
     else:
-        raise TypeError("Source must be a file path, PIL Image, or RGB byte buffer")
+        raise TypeError(f"Unsupported image_source type: {type(image_source)}")
 
-    # High-performance conversion to RGB565 Little-Endian
-    out = bytearray(tw * th * 2)
-    in_idx = 0
-    out_idx = 0
+    if crop_cover:
+        img = scale_and_center_crop(img, width, height)
+    elif img.size != (width, height):
+        img = img.resize((width, height), Image.Resampling.LANCZOS)
+
+    alpha_plane = b""
+    if include_alpha:
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            rgba = img.convert("RGBA")
+            alpha_plane = rgba.getchannel("A").tobytes()
+        else:
+            alpha_plane = b"\xff" * (width * height)
+
+    img = img.convert("RGB")
+    raw_rgb = img.tobytes()
+
+    out = bytearray(width * height * 2)
+    little = (byte_order == "little")
 
     if dither:
-        for y in range(th):
-            b_row = (y & 3) << 2
-            for x in range(tw):
-                b_base = (b_row | (x & 3)) << 8
-                r = _DITHER_TABLE_R[b_base + raw_rgb[in_idx]]
-                g = _DITHER_TABLE_G[b_base + raw_rgb[in_idx + 1]]
-                b = _DITHER_TABLE_B[b_base + raw_rgb[in_idx + 2]]
-                val = (r << 8) | (g << 3) | b
-                out[out_idx] = val & 0xFF
-                out[out_idx + 1] = (val >> 8) & 0xFF
-                in_idx += 3
+        idx = 0
+        out_idx = 0
+        for y in range(height):
+            bayer_row = _BAYER_4X4[y & 3]
+            for x in range(width):
+                b_val = bayer_row[x & 3]
+                # R and B have step size 8 (8-bit -> 5-bit); G has step size 4 (8-bit -> 6-bit)
+                r = int(raw_rgb[idx] + b_val * 8.0)
+                g = int(raw_rgb[idx + 1] + b_val * 4.0)
+                b = int(raw_rgb[idx + 2] + b_val * 8.0)
+                if r < 0:
+                    r = 0
+                elif r > 255:
+                    r = 255
+                if g < 0:
+                    g = 0
+                elif g > 255:
+                    g = 255
+                if b < 0:
+                    b = 0
+                elif b > 255:
+                    b = 255
+
+                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+                if little:
+                    out[out_idx] = rgb565 & 0xFF
+                    out[out_idx + 1] = (rgb565 >> 8) & 0xFF
+                else:
+                    out[out_idx] = (rgb565 >> 8) & 0xFF
+                    out[out_idx + 1] = rgb565 & 0xFF
+                idx += 3
                 out_idx += 2
     else:
-        total_pixels = tw * th
-        for _ in range(total_pixels):
-            r = raw_rgb[in_idx]
-            g = raw_rgb[in_idx + 1]
-            b = raw_rgb[in_idx + 2]
-            val = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-            out[out_idx] = val & 0xFF
-            out[out_idx + 1] = (val >> 8) & 0xFF
-            in_idx += 3
+        out_idx = 0
+        for i in range(0, len(raw_rgb), 3):
+            r = raw_rgb[i]
+            g = raw_rgb[i + 1]
+            b = raw_rgb[i + 2]
+            rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+            if little:
+                out[out_idx] = rgb565 & 0xFF
+                out[out_idx + 1] = (rgb565 >> 8) & 0xFF
+            else:
+                out[out_idx] = (rgb565 >> 8) & 0xFF
+                out[out_idx + 1] = rgb565 & 0xFF
             out_idx += 2
 
+    if include_alpha:
+        return bytes(out) + alpha_plane
     return bytes(out)
 
-def create_test_pattern(width: int = 800, height: int = 480) -> bytes:
-    """
-    Generates a synthetic procedural test pattern (color gradient) without external dependencies.
-    """
-    buffer = bytearray(width * height * 2)
-    idx = 0
-    for y in range(height):
-        # Y gradient from 0 to 255
-        g = int((y / height) * 255)
-        for x in range(width):
-            # X gradient from 0 to 255
-            r = int((x / width) * 255)
-            # Diagonal blue
-            b = int(((x + y) / (width + height)) * 255)
-            val = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-            buffer[idx] = val & 0xFF
-            buffer[idx + 1] = (val >> 8) & 0xFF
-            idx += 2
-    return bytes(buffer)
+
+def create_test_pattern(width: int = LCD_WIDTH, height: int = LCD_HEIGHT) -> Image.Image:
+    """Create a 480x800 test pattern image."""
+    from .theme_generator import generate_theme
+    im = generate_theme("emerald_synthwave")
+    if im.size != (width, height):
+        im = im.resize((width, height), Image.Resampling.LANCZOS)
+    return im
+
