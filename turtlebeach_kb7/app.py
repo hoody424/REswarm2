@@ -13,8 +13,8 @@ import os
 import time
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from typing import Dict, Any, List, Optional
+from tkinter import ttk, filedialog, messagebox, colorchooser
+from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image, ImageTk
 
 from .audio_mixer import UniversalAudioMixer, AppGroup, AudioDeviceItem
@@ -25,6 +25,16 @@ from .image import convert_to_rgb565
 from .widgets import WIDGET_CATALOG, LAYOUT_TEMPLATES, lookup_widget
 from .device import KB7Device, SLOT_BACKGROUND
 from .steelseries import SteelSeriesSync, THEME_RGB_MAP
+from .lighting import (
+    LightingEngine,
+    LIGHTING_EFFECTS,
+    COLOR_PALETTES,
+    rgb_to_hex,
+    hex_to_rgb,
+    ZONE_WASD,
+    ZONE_ARROWS,
+    ZONE_F_KEYS,
+)
 from .streamdeck import (
     SmartStreamDeckManager,
     STREAMDECK_ACTIONS,
@@ -100,9 +110,18 @@ class KB7CommandCenterApp:
         self.selected_sd_slot: int = 0
         self._last_touch_time: float = 0.0
 
+        # Customizable RGB Lighting Engine (KB7 7-Zone Planar RGB + SteelSeries Mouse)
+        self.lighting = LightingEngine(
+            hw_apply_callback=self._send_kb7_lighting_hw,
+            steelseries=self.steelseries,
+        )
+
         # Build Navigation & Main Views
         self._build_header()
         self._build_tabs()
+
+        # Start Lighting Engine
+        self.lighting.start()
 
         # Initial Audio & Display Refresh (Non-blocking background thread)
         self.refresh_audio_state()
@@ -186,11 +205,12 @@ class KB7CommandCenterApp:
         self.tab_frames: Dict[str, tk.Frame] = {}
 
         tabs = [
-            ("mixer", "🔊 Windows Sound Mixer"),
+            ("mixer", "🔊 Sound Mixer"),
             ("streamdeck", "🎛️ Smart Stream Deck"),
-            ("themes", "🎨 Display Themes & Wallpaper"),
-            ("widgets", "🧩 Widgets & Display Pages"),
-            ("hardware", "⚡ Hardware & Touch Logs"),
+            ("lighting", "💡 Leuchteffekte & RGB"),
+            ("themes", "🎨 Display Themes"),
+            ("widgets", "🧩 Widgets & Pages"),
+            ("hardware", "⚡ Hardware & Touch"),
         ]
 
         self.content_container = tk.Frame(self.root, bg=COLOR_BG_DARK)
@@ -198,8 +218,8 @@ class KB7CommandCenterApp:
 
         for key, title in tabs:
             btn = tk.Button(
-                tab_nav, text=title, font=("Segoe UI", 10, "bold"),
-                bg=COLOR_BG_CARD, fg=COLOR_TEXT_MUTED, bd=0, padx=16, pady=8,
+                tab_nav, text=title, font=("Segoe UI", 9, "bold"),
+                bg=COLOR_BG_CARD, fg=COLOR_TEXT_MUTED, bd=0, padx=13, pady=8,
                 cursor="hand2", activebackground=COLOR_BG_HOVER, activeforeground=COLOR_TEXT_MAIN,
                 command=lambda k=key: self.switch_tab(k)
             )
@@ -212,11 +232,12 @@ class KB7CommandCenterApp:
         # Build individual views
         self._build_mixer_tab(self.tab_frames["mixer"])
         self._build_streamdeck_tab(self.tab_frames["streamdeck"])
+        self._build_lighting_tab(self.tab_frames["lighting"])
         self._build_themes_tab(self.tab_frames["themes"])
         self._build_widgets_tab(self.tab_frames["widgets"])
         self._build_hardware_tab(self.tab_frames["hardware"])
 
-        self.switch_tab("streamdeck")
+        self.switch_tab("lighting")
 
     def switch_tab(self, active_key: str):
         """Switches active view."""
@@ -1111,6 +1132,445 @@ class KB7CommandCenterApp:
         threading.Thread(target=worker, daemon=True).start()
 
     # =========================================================================
+    # TAB 2C: LEUCHTEFFEKTE & RGB CUSTOMIZER (7-ZONEN KB7 + STEELSERIES MAUS)
+    # =========================================================================
+
+    def _send_kb7_lighting_hw(
+        self,
+        mode: int = 7,
+        speed: int = 6,
+        brightness: int = 100,
+        color_flag: int = 0x0B,
+        direction: int = 1,
+        group_colors: Optional[List[Tuple[int, int, int]]] = None,
+        key_offsets_rgb: Optional[Dict[int, Tuple[int, int, int]]] = None,
+    ) -> bool:
+        """Dispatches Report 0x11 (348B) keyboard RGB configuration safely via Daemon, Client, or direct HID."""
+        try:
+            if self.daemon and self.daemon.device:
+                with self.daemon.lock:
+                    return self.daemon.device.set_keyboard_lighting(
+                        mode=mode,
+                        speed=speed,
+                        brightness=brightness,
+                        color_flag=color_flag,
+                        direction=direction,
+                        group_colors=group_colors,
+                        key_offsets_rgb=key_offsets_rgb,
+                    )
+            elif self.client and self.hw_connected:
+                return self.client.set_keyboard_lighting(
+                    mode=mode,
+                    speed=speed,
+                    brightness=brightness,
+                    color_flag=color_flag,
+                    direction=direction,
+                    group_colors=group_colors,
+                    key_offsets_rgb=key_offsets_rgb,
+                )
+            else:
+                with KB7Device() as dev:
+                    return dev.set_keyboard_lighting(
+                        mode=mode,
+                        speed=speed,
+                        brightness=brightness,
+                        color_flag=color_flag,
+                        direction=direction,
+                        group_colors=group_colors,
+                        key_offsets_rgb=key_offsets_rgb,
+                    )
+        except Exception as e:
+            print(f"[!] Hardware lighting dispatch warning: {e}")
+            return False
+
+    def _build_lighting_tab(self, parent: tk.Frame):
+        content = tk.Frame(parent, bg=COLOR_BG_DARK)
+        content.pack(fill=tk.BOTH, expand=True, pady=2)
+
+        # Left Panel: Effect Catalog & Speed/Brightness/Sync Controls
+        left = tk.Frame(content, bg=COLOR_BG_CARD, width=370, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8), pady=2)
+        left.pack_propagate(False)
+
+        tk.Label(
+            left, text="💡 LEUCHTEFFEKTE AUSWÄHLEN",
+            font=("Segoe UI", 10, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD
+        ).pack(anchor="w", padx=14, pady=(10, 4))
+
+        # Scrollable or Listbox/Radiobutton area for the 16 effects
+        fx_list_frame = tk.Frame(left, bg="#0d1117", bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        fx_list_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=4)
+
+        self.lb_effects = tk.Listbox(
+            fx_list_frame, bg="#0d1117", fg=COLOR_TEXT_MAIN,
+            selectbackground=COLOR_ACCENT, selectforeground="#000000",
+            font=("Segoe UI", 9, "bold"), bd=0, highlightthickness=0, activestyle="none", height=12
+        )
+        sb_fx = ttk.Scrollbar(fx_list_frame, orient=tk.VERTICAL, command=self.lb_effects.yview)
+        self.lb_effects.configure(yscrollcommand=sb_fx.set)
+        self.lb_effects.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
+        sb_fx.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._effect_keys: List[str] = list(LIGHTING_EFFECTS.keys())
+        sel_idx = 0
+        for i, eff_id in enumerate(self._effect_keys):
+            meta = LIGHTING_EFFECTS[eff_id]
+            self.lb_effects.insert(tk.END, str(meta["name"]))
+            if eff_id == self.lighting.effect_id:
+                sel_idx = i
+
+        self.lb_effects.selection_set(sel_idx)
+        self.lb_effects.see(sel_idx)
+        self.lb_effects.bind("<<ListboxSelect>>", self._on_lighting_effect_selected)
+
+        self.lbl_fx_desc = tk.Label(
+            left, text=str(LIGHTING_EFFECTS[self.lighting.effect_id]["desc"]),
+            font=("Segoe UI", 8), fg="#00e575", bg=COLOR_BG_CARD, wraplength=340, justify=tk.LEFT
+        )
+        self.lbl_fx_desc.pack(anchor="w", padx=14, pady=(2, 6))
+
+        # Sliders: Speed (1..11) & Brightness (0..100%)
+        f_sliders = tk.Frame(left, bg=COLOR_BG_CARD)
+        f_sliders.pack(fill=tk.X, padx=14, pady=2)
+
+        row_spd = tk.Frame(f_sliders, bg=COLOR_BG_CARD)
+        row_spd.pack(fill=tk.X, pady=2)
+        self.lbl_fx_speed = tk.Label(row_spd, text=f"Geschwindigkeit: {self.lighting.speed} / 11", font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD)
+        self.lbl_fx_speed.pack(side=tk.LEFT)
+        self.lbl_fx_dir = tk.Label(row_spd, text="Richtung:", font=("Segoe UI", 8), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD)
+        self.lbl_fx_dir.pack(side=tk.RIGHT, padx=(4, 0))
+
+        self.slider_fx_speed = ttk.Scale(f_sliders, from_=1, to=11, orient=tk.HORIZONTAL, command=self._on_fx_speed_changed)
+        self.slider_fx_speed.set(self.lighting.speed)
+        self.slider_fx_speed.pack(fill=tk.X, pady=(0, 4))
+
+        row_bri = tk.Frame(f_sliders, bg=COLOR_BG_CARD)
+        row_bri.pack(fill=tk.X, pady=2)
+        self.lbl_fx_bri = tk.Label(row_bri, text=f"LED-Helligkeit: {self.lighting.brightness}%", font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD)
+        self.lbl_fx_bri.pack(side=tk.LEFT)
+
+        self.slider_fx_bri = ttk.Scale(f_sliders, from_=0, to=100, orient=tk.HORIZONTAL, command=self._on_fx_bri_changed)
+        self.slider_fx_bri.set(self.lighting.brightness)
+        self.slider_fx_bri.pack(fill=tk.X, pady=(0, 4))
+
+        # Direction & Sync Toggles
+        f_toggles = tk.Frame(left, bg=COLOR_BG_CARD)
+        f_toggles.pack(fill=tk.X, padx=14, pady=(2, 8))
+
+        self.var_fx_kb_en = tk.BooleanVar(value=self.lighting.kb_enabled)
+        cb_kb = tk.Checkbutton(
+            f_toggles, text="⌨️ KB7 Tastatur-RGB aktiv", variable=self.var_fx_kb_en,
+            font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
+            selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
+            command=self._on_fx_toggles_changed
+        )
+        cb_kb.grid(row=0, column=0, sticky="w", padx=(0, 8))
+
+        self.var_fx_mouse_en = tk.BooleanVar(value=self.lighting.mouse_sync_enabled)
+        cb_ms = tk.Checkbutton(
+            f_toggles, text="🖱️ SteelSeries Maus-Sync", variable=self.var_fx_mouse_en,
+            font=("Segoe UI", 8, "bold"), fg="#00e575", bg=COLOR_BG_CARD,
+            selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
+            command=self._on_fx_toggles_changed
+        )
+        cb_ms.grid(row=0, column=1, sticky="w")
+
+        self.var_fx_rainbow = tk.BooleanVar(value=self.lighting.rainbow_override)
+        cb_rb = tk.Checkbutton(
+            f_toggles, text="🌈 Hardware-Regenbogen (statt Custom-Farben)", variable=self.var_fx_rainbow,
+            font=("Segoe UI", 8), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD,
+            selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
+            command=self._on_fx_toggles_changed
+        )
+        cb_rb.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        # Right Panel: 3 Customizable Color Channels + Quick Palettes + Live 7-Zone Keyboard & Mouse Preview
+        right = tk.Frame(content, bg=COLOR_BG_CARD, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, pady=2)
+
+        tk.Label(
+            right, text="🎨 INDIVIDUELLE FARBANPASSUNG (3 FARBKANÄLE FÜR VERLÄUFE, WELLEN & ZONEN)",
+            font=("Segoe UI", 10, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD
+        ).pack(anchor="w", padx=16, pady=(10, 6))
+
+        # 3 Color Channel Cards side by side
+        colors_row = tk.Frame(right, bg=COLOR_BG_CARD)
+        colors_row.pack(fill=tk.X, padx=16, pady=4)
+        for c_idx in range(3):
+            colors_row.columnconfigure(c_idx, weight=1, uniform="col_chan")
+
+        channel_meta = [
+            (1, "FARBE 1 (PRIMÄR)", "Haupttasten / Verlauf Start / Ruhe", self.lighting.color1_hex),
+            (2, "FARBE 2 (SEKUNDÄR)", "WASD & F-Tasten / Verlauf Mitte", self.lighting.color2_hex),
+            (3, "FARBE 3 (AKZENT)", "Pfeiltasten & Underglow / Peak", self.lighting.color3_hex),
+        ]
+        self._color_swatches: Dict[int, tk.Button] = {}
+        self._color_entries: Dict[int, tk.Entry] = {}
+
+        for idx, title, sub, init_hex in channel_meta:
+            c_card = tk.Frame(colors_row, bg="#10151f", bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+            c_card.grid(row=0, column=idx - 1, sticky="nsew", padx=4, pady=2)
+
+            tk.Label(c_card, text=title, font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MAIN, bg="#10151f").pack(anchor="w", padx=10, pady=(8, 0))
+            tk.Label(c_card, text=sub, font=("Segoe UI", 7), fg=COLOR_TEXT_MUTED, bg="#10151f").pack(anchor="w", padx=10, pady=(0, 6))
+
+            swatch_btn = tk.Button(
+                c_card, text="🎨 Farbe wählen...", font=("Segoe UI", 9, "bold"),
+                bg=init_hex, fg=self._ideal_text_fg(init_hex), bd=0, pady=8, cursor="hand2",
+                command=lambda ch=idx: self._pick_custom_color(ch)
+            )
+            swatch_btn.pack(fill=tk.X, padx=10, pady=4)
+            self._color_swatches[idx] = swatch_btn
+
+            hex_row = tk.Frame(c_card, bg="#10151f")
+            hex_row.pack(fill=tk.X, padx=10, pady=(2, 8))
+            tk.Label(hex_row, text="HEX:", font=("Consolas", 8, "bold"), fg=COLOR_TEXT_MUTED, bg="#10151f").pack(side=tk.LEFT)
+
+            ent_hex = tk.Entry(hex_row, width=9, font=("Consolas", 9, "bold"), bg=COLOR_BG_DARK, fg=COLOR_TEXT_MAIN, insertbackground=COLOR_TEXT_MAIN, bd=1)
+            ent_hex.insert(0, init_hex)
+            ent_hex.pack(side=tk.LEFT, padx=6)
+            ent_hex.bind("<Return>", lambda e, ch=idx: self._apply_hex_entry(ch))
+            self._color_entries[idx] = ent_hex
+
+            btn_ok = tk.Button(
+                hex_row, text="OK", font=("Segoe UI", 7, "bold"),
+                bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=6, pady=2, cursor="hand2",
+                command=lambda ch=idx: self._apply_hex_entry(ch)
+            )
+            btn_ok.pack(side=tk.RIGHT)
+
+        # Quick 3-Color Palette Presets
+        tk.Label(
+            right, text="⚡ 1-KLICK FARBPALETTEN (SETZT FARBE 1 + FARBE 2 + FARBE 3):",
+            font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD
+        ).pack(anchor="w", padx=16, pady=(8, 4))
+
+        pal_grid = tk.Frame(right, bg=COLOR_BG_CARD)
+        pal_grid.pack(fill=tk.X, padx=16, pady=2)
+        for col_i in range(4):
+            pal_grid.columnconfigure(col_i, weight=1, uniform="pal_col")
+
+        for p_idx, (p_name, h1, h2, h3) in enumerate(COLOR_PALETTES):
+            r, c = divmod(p_idx, 4)
+            p_btn = tk.Button(
+                pal_grid, text=p_name, font=("Segoe UI", 8, "bold"),
+                bg=h1, fg=self._ideal_text_fg(h1), bd=0, padx=6, pady=5, cursor="hand2",
+                command=lambda c1=h1, c2=h2, c3=h3, pn=p_name: self._apply_color_palette(c1, c2, c3, pn)
+            )
+            p_btn.grid(row=r, column=c, sticky="ew", padx=3, pady=3)
+
+        # Live 7-Zone Keyboard + WASD/Arrows + SteelSeries Mouse Visualizer Canvas
+        tk.Label(
+            right, text="🎹 LIVE RGB-ZONEN VORSCHAU (KB7 7-GRUPPEN PLANAR-RGB + WASD/PFEILE + MAUS):",
+            font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD
+        ).pack(anchor="w", padx=16, pady=(10, 4))
+
+        self.canvas_rgb_preview = tk.Canvas(
+            right, bg="#080c14", height=150, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER
+        )
+        self.canvas_rgb_preview.pack(fill=tk.X, padx=16, pady=4)
+
+        # Bottom Action & Status Bar
+        bot_bar = tk.Frame(right, bg=COLOR_BG_CARD)
+        bot_bar.pack(fill=tk.X, padx=16, pady=(6, 10))
+
+        self.btn_apply_lighting = tk.Button(
+            bot_bar, text="⚡ LEUCHTEFFEKT & FARBEN JETZT AUF HARDWARE ANWENDEN",
+            font=("Segoe UI", 9, "bold"), bg="#00e575", fg="#000000", activebackground="#00ff88",
+            bd=0, padx=16, pady=7, cursor="hand2", command=self._on_apply_lighting_clicked
+        )
+        self.btn_apply_lighting.pack(side=tk.LEFT)
+
+        self.lbl_lighting_status = tk.Label(
+            bot_bar, text="✓ Echtzeit-Synchronisation aktiv",
+            font=("Segoe UI", 8, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD
+        )
+        self.lbl_lighting_status.pack(side=tk.RIGHT, padx=8)
+
+        # Hook live preview callback
+        self.lighting.set_preview_callback(self._schedule_rgb_preview_update)
+        self._draw_rgb_preview(self.lighting.current_groups, self.lighting.current_key_offsets, self.lighting.current_mouse_rgb)
+
+    @staticmethod
+    def _ideal_text_fg(hex_col: str) -> str:
+        r, g, b = hex_to_rgb(hex_col)
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        return "#000000" if lum > 135 else "#FFFFFF"
+
+    def _on_lighting_effect_selected(self, event=None):
+        sel = self.lb_effects.curselection()
+        if not sel:
+            return
+        eff_id = self._effect_keys[sel[0]]
+        self.lighting.effect_id = eff_id
+        meta = LIGHTING_EFFECTS[eff_id]
+        self.lbl_fx_desc.configure(text=str(meta["desc"]))
+        self.lighting.save_config()
+        self.lighting.apply_now()
+        self.lbl_lighting_status.configure(text=f"✓ Aktiv: {meta['name']}", fg="#00e575")
+
+    def _on_fx_speed_changed(self, val: str):
+        v = max(1, min(11, int(round(float(val)))))
+        self.lighting.speed = v
+        if hasattr(self, "lbl_fx_speed"):
+            self.lbl_fx_speed.configure(text=f"Geschwindigkeit: {v} / 11")
+        self.lighting.save_config()
+        if not LIGHTING_EFFECTS.get(self.lighting.effect_id, {}).get("dynamic", False):
+            self.lighting.apply_now()
+
+    def _on_fx_bri_changed(self, val: str):
+        v = max(0, min(100, int(round(float(val)))))
+        self.lighting.brightness = v
+        if hasattr(self, "lbl_fx_bri"):
+            self.lbl_fx_bri.configure(text=f"LED-Helligkeit: {v}%")
+        self.lighting.save_config()
+        if not LIGHTING_EFFECTS.get(self.lighting.effect_id, {}).get("dynamic", False):
+            self.lighting.apply_now()
+
+    def _on_fx_toggles_changed(self):
+        self.lighting.kb_enabled = bool(self.var_fx_kb_en.get())
+        self.lighting.mouse_sync_enabled = bool(self.var_fx_mouse_en.get())
+        self.lighting.rainbow_override = bool(self.var_fx_rainbow.get())
+        self.lighting.save_config()
+        self.lighting.apply_now()
+
+    def _pick_custom_color(self, channel_idx: int):
+        cur_hex = (
+            self.lighting.color1_hex if channel_idx == 1
+            else self.lighting.color2_hex if channel_idx == 2
+            else self.lighting.color3_hex
+        )
+        rgb_tuple, hex_str = colorchooser.askcolor(
+            color=cur_hex,
+            title=f"Farbe {channel_idx} auswählen (KB7 & SteelSeries RGB)"
+        )
+        if hex_str:
+            self._set_channel_color(channel_idx, hex_str.upper())
+            self.lighting.save_config()
+            self.lighting.apply_now()
+            self.lbl_lighting_status.configure(text=f"✓ Farbe {channel_idx} auf {hex_str.upper()} gesetzt!", fg="#00e575")
+
+    def _apply_hex_entry(self, channel_idx: int):
+        raw = self._color_entries[channel_idx].get().strip()
+        if not raw.startswith("#"):
+            raw = "#" + raw
+        rgb = hex_to_rgb(raw)
+        clean_hex = rgb_to_hex(rgb)
+        self._set_channel_color(channel_idx, clean_hex)
+        self.lighting.save_config()
+        self.lighting.apply_now()
+        self.lbl_lighting_status.configure(text=f"✓ Farbe {channel_idx} aktualisiert ({clean_hex})", fg="#00e575")
+
+    def _set_channel_color(self, channel_idx: int, hex_val: str):
+        if channel_idx == 1:
+            self.lighting.color1_hex = hex_val
+        elif channel_idx == 2:
+            self.lighting.color2_hex = hex_val
+        else:
+            self.lighting.color3_hex = hex_val
+
+        if channel_idx in self._color_swatches:
+            self._color_swatches[channel_idx].configure(bg=hex_val, fg=self._ideal_text_fg(hex_val))
+        if channel_idx in self._color_entries:
+            self._color_entries[channel_idx].delete(0, tk.END)
+            self._color_entries[channel_idx].insert(0, hex_val)
+
+    def _apply_color_palette(self, h1: str, h2: str, h3: str, pal_name: str):
+        self._set_channel_color(1, h1)
+        self._set_channel_color(2, h2)
+        self._set_channel_color(3, h3)
+        self.lighting.save_config()
+        self.lighting.apply_now()
+        self.lbl_lighting_status.configure(text=f"✓ Palette '{pal_name}' aktiviert!", fg="#00e575")
+
+    def _on_apply_lighting_clicked(self):
+        self.lighting.save_config()
+        ok = self.lighting.apply_now()
+        if ok:
+            self.lbl_lighting_status.configure(text="✓ Leuchteffekt & Farben an KB7 & Maus gesendet!", fg="#00e575")
+        else:
+            self.lbl_lighting_status.configure(text="[!] Übertragung abgeschlossen (prüfe Verbindung)", fg=COLOR_ACCENT_ALT)
+
+    def _schedule_rgb_preview_update(self, groups, key_offsets, mouse_rgb):
+        if not self.running or self.active_tab != "lighting":
+            return
+        self.root.after(0, lambda g=list(groups), k=dict(key_offsets), m=mouse_rgb: self._draw_rgb_preview(g, k, m))
+
+    def _draw_rgb_preview(
+        self,
+        groups: List[Tuple[int, int, int]],
+        key_offsets: Dict[int, Tuple[int, int, int]],
+        mouse_rgb: Tuple[int, int, int],
+    ):
+        if not hasattr(self, "canvas_rgb_preview"):
+            return
+        c = self.canvas_rgb_preview
+        c.delete("all")
+        w = max(460, c.winfo_width())
+        h = 150
+
+        # Keyboard chassis outline (left 74% of canvas)
+        kb_x0, kb_y0 = 14, 12
+        kb_w = int(w * 0.72)
+        kb_h = h - 24
+        c.create_rectangle(kb_x0, kb_y0, kb_x0 + kb_w, kb_y0 + kb_h, fill="#0c1018", outline="#30363d", width=2)
+
+        # Draw 7 Planar RGB Zones (Rows/Groups 0..6)
+        row_h = (kb_h - 16) / 7.0
+        zone_labels = [
+            "G0: F-Tasten & Esc",
+            "G1: Zahlenreihe 1-0",
+            "G2: QWERTZ-Reihe",
+            "G3: ASDF-Reihe",
+            "G4: YXCV-Reihe",
+            "G5: Strg / Leertaste",
+            "G6: Underglow / Rand",
+        ]
+        for g_idx in range(7):
+            rgb = groups[g_idx] if g_idx < len(groups) else (0, 255, 102)
+            col_hex = rgb_to_hex(rgb)
+            ry0 = kb_y0 + 8 + g_idx * row_h
+            ry1 = ry0 + row_h - 3
+            c.create_rectangle(kb_x0 + 10, ry0, kb_x0 + kb_w - 135, ry1, fill=col_hex, outline="#161b22")
+            c.create_text(
+                kb_x0 + 18, (ry0 + ry1) / 2,
+                text=zone_labels[g_idx], anchor="w",
+                fill=self._ideal_text_fg(col_hex), font=("Consolas", 7, "bold")
+            )
+
+        # Highlight WASD & Arrow Key Badges inside Keyboard Preview
+        wasd_rgb = key_offsets.get(62, groups[2] if len(groups) > 2 else (0, 229, 255))
+        wasd_hex = rgb_to_hex(wasd_rgb)
+        c.create_rectangle(kb_x0 + kb_w - 125, kb_y0 + 12, kb_x0 + kb_w - 12, kb_y0 + 48, fill=wasd_hex, outline="#ffffff", width=1)
+        c.create_text(
+            kb_x0 + kb_w - 68, kb_y0 + 30,
+            text="WASD ZONE", fill=self._ideal_text_fg(wasd_hex), font=("Segoe UI", 8, "bold")
+        )
+
+        arr_rgb = key_offsets.get(198, groups[5] if len(groups) > 5 else (255, 0, 128))
+        arr_hex = rgb_to_hex(arr_rgb)
+        c.create_rectangle(kb_x0 + kb_w - 125, kb_y0 + 54, kb_x0 + kb_w - 12, kb_y0 + 90, fill=arr_hex, outline="#ffffff", width=1)
+        c.create_text(
+            kb_x0 + kb_w - 68, kb_y0 + 72,
+            text="PFEILTASTEN", fill=self._ideal_text_fg(arr_hex), font=("Segoe UI", 8, "bold")
+        )
+
+        # Mini LCD badge on top-right of keyboard
+        c.create_rectangle(kb_x0 + kb_w - 125, kb_y0 + 96, kb_x0 + kb_w - 12, kb_y0 + kb_h - 8, fill="#06152d", outline="#00d2ff", width=1)
+        c.create_text(kb_x0 + kb_w - 68, kb_y0 + kb_h - 20, text="4.3\" TFT LCD", fill="#00d2ff", font=("Consolas", 7, "bold"))
+
+        # SteelSeries Mouse Preview on the right side
+        ms_x0 = kb_x0 + kb_w + 16
+        ms_x1 = w - 14
+        ms_cx = (ms_x0 + ms_x1) / 2
+        ms_hex = rgb_to_hex(mouse_rgb)
+
+        c.create_oval(ms_cx - 34, kb_y0 + 14, ms_cx + 34, kb_y0 + kb_h - 18, fill="#10151f", outline=ms_hex, width=3)
+        c.create_oval(ms_cx - 22, kb_y0 + 52, ms_cx + 22, kb_y0 + kb_h - 28, fill=ms_hex, outline="")
+        c.create_rectangle(ms_cx - 4, kb_y0 + 22, ms_cx + 4, kb_y0 + 38, fill=ms_hex, outline="#ffffff")
+        c.create_text(ms_cx, kb_y0 + kb_h - 6, text="🖱️ SteelSeries RGB", fill=ms_hex, font=("Segoe UI", 8, "bold"))
+
+    # =========================================================================
     # TAB 3: WIDGETS & DISPLAY PAGES
     # =========================================================================
 
@@ -1412,6 +1872,11 @@ class KB7CommandCenterApp:
 
     def on_close(self):
         self.running = False
+        if hasattr(self, "lighting") and self.lighting:
+            try:
+                self.lighting.stop()
+            except Exception:
+                pass
         if self.steelseries:
             try:
                 self.steelseries.stop()

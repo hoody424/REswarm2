@@ -46,6 +46,7 @@ USAGE_TOUCH = 0x0001
 USAGE_PAGE_FEATURE = 0xFF03          # Interface mi_02&col06: 1044B Feature Reports
 
 # Feature Request Prep Commands (Report ID 0x05)
+FEATURE_REQ_CMD_LIGHTING = 0xB0      # Prepares Report 0x11 (348 bytes)
 FEATURE_REQ_CMD_LCD_SETTINGS = 0xB8  # Prepares Report 0x25 (164 bytes)
 FEATURE_REQ_CMD_SCREEN_KEYS = 0xB9   # Prepares Report 0x29 (584 bytes)
 
@@ -377,6 +378,10 @@ class KB7Device:
             req = bytes([0x05, 0x00, FEATURE_REQ_CMD_SCREEN_KEYS, 0x00, 0x00])
             hid_set_feature(self.feat_handle, req)
             time.sleep(0.02)
+        elif report_id == REPORT_ID_LIGHTING:
+            req = bytes([0x05, 0x00, FEATURE_REQ_CMD_LIGHTING, 0x00, 0x00])
+            hid_set_feature(self.feat_handle, req)
+            time.sleep(0.03)
 
         data = hid_get_feature(self.feat_handle, report_id, length)
         return bytearray(data)
@@ -1015,32 +1020,81 @@ class KB7Device:
     # Keyboard RGB Backlight Control (Report ID 0x11, 348 bytes)
     # ------------------------------------------------------------------
 
-    def set_keyboard_rgb(self, r: int, g: int, b: int, brightness: int = 100) -> bool:
+    def set_keyboard_lighting(
+        self,
+        mode: int = 7,
+        speed: int = 6,
+        brightness: int = 100,
+        color_flag: int = 0x0B,
+        direction: int = 1,
+        group_colors: Optional[List[Tuple[int, int, int]]] = None,
+        key_offsets_rgb: Optional[dict] = None,
+    ) -> bool:
         """
-        Set the KB7 keyboard backlight to a static RGB color (`r`, `g`, `b` in `0..255`).
-        Uses Feature Report `0x11` (348 bytes, extracted from `Command_KB7_Profile_Mgr.dat`).
+        Configure the KB7 keyboard RGB backlight via Feature Report `0x11` (348 bytes = `0x015C`).
+        Grounded in disassembly of `COMMAND_KB7.dll` (`0x18027e197..0x18027e284` and `0x1802d292c..0x1802d2b58`):
+        - `buf[0]`: `0x11` (Report ID)
+        - `buf[1..3]`: `0x015C` (348 bytes LE)
+        - `buf[3]`: `0x00` (Profile index)
+        - `buf[4]`: `mode` (`1`=ColorWave, `6`=Breathing, `7`=FullyLit/Static, `8`=Snake, `9`=AIMO,
+          `10`=Heartbeat, `11`=Custom, `17`=FadeFX, `18`=Ripple)
+        - `buf[5]`: `speed` (`1..11`, default `6`)
+        - `buf[6]`: `brightness` (`0..100`, default `100`)
+        - `buf[7]`: `color_flag` (`0x0B` = Custom RGB from `buf[10..346]`, `0x00` = Rainbow preset)
+        - `buf[8]`: `direction` (`1..4`, default `1`)
+        - `buf[10..346]`: 7 planar RGB groups × 48 bytes (`16 R` + `16 G` + `16 B` per group).
+          For any key's `r_offset`, `R = buf[10 + r_offset]`, `G = buf[26 + r_offset]`, `B = buf[42 + r_offset]`.
         """
-        try:
-            buf = self.get_feature_report(REPORT_ID_LIGHTING, 348)
-            if len(buf) != 348 or buf[0] != REPORT_ID_LIGHTING:
-                raise ValueError("Invalid 0x11 report")
-        except Exception:
-            buf = bytearray(348)
-            buf[0] = REPORT_ID_LIGHTING
-            buf[1] = 0x5C
-            buf[2] = 0x01
-
-        buf[4] = 0x01  # Mode 1 = Static / Wave preset
-        buf[5] = 0x06  # Speed
+        buf = bytearray(348)
+        buf[0] = REPORT_ID_LIGHTING
+        buf[1] = 0x5C
+        buf[2] = 0x01
+        buf[3] = 0x00
+        buf[4] = int(mode) & 0xFF
+        buf[5] = max(1, min(11, int(speed)))
         buf[6] = max(0, min(100, int(brightness)))
-        buf[7] = 0x00  # Custom RGB color index
-        buf[8] = 0x01
+        buf[7] = int(color_flag) & 0xFF
+        buf[8] = max(1, min(4, int(direction)))
+        buf[9] = 0x00
 
-        rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3)
-        for i in range(10, 346, 2):
-            struct.pack_into("<H", buf, i, rgb565)
+        if not group_colors:
+            group_colors = [(0, 255, 102)] * 7
+        while len(group_colors) < 7:
+            group_colors = list(group_colors) + [group_colors[-1]]
+
+        for g in range(7):
+            r, gr, b = group_colors[g]
+            r = max(0, min(255, int(r)))
+            gr = max(0, min(255, int(gr)))
+            b = max(0, min(255, int(b)))
+            base = 10 + g * 48
+            buf[base : base + 16] = bytes([r]) * 16
+            buf[base + 16 : base + 32] = bytes([gr]) * 16
+            buf[base + 32 : base + 48] = bytes([b]) * 16
+
+        if key_offsets_rgb:
+            for r_off, rgb in key_offsets_rgb.items():
+                off = int(r_off)
+                if 0 <= off < 304:
+                    kr, kg, kb = rgb
+                    buf[10 + off] = max(0, min(255, int(kr)))
+                    buf[26 + off] = max(0, min(255, int(kg)))
+                    buf[42 + off] = max(0, min(255, int(kb)))
 
         return self.send_feature_report(buf, add_checksum=True, post_delay_sec=0.015, wait_sync=False)
+
+    def set_keyboard_rgb(self, r: int, g: int, b: int, brightness: int = 100) -> bool:
+        """
+        Set the KB7 keyboard backlight to a static uniform RGB color (`r`, `g`, `b` in `0..255`).
+        """
+        return self.set_keyboard_lighting(
+            mode=7,
+            speed=6,
+            brightness=brightness,
+            color_flag=0x0B,
+            direction=1,
+            group_colors=[(r, g, b)] * 7,
+        )
 
     # ------------------------------------------------------------------
     # Live System Telemetry & Volume Mixer Push (Report ID 0x16, 104B)

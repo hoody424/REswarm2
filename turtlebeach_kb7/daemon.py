@@ -314,6 +314,25 @@ class KB7Daemon:
                 ok = self.device.refresh_screen()
                 return {"status": "ok" if ok else "error"}
 
+            elif cmd == "set_keyboard_lighting":
+                mode = int(req.get("mode", 7))
+                speed = int(req.get("speed", 6))
+                brightness = int(req.get("brightness", 100))
+                color_flag = int(req.get("color_flag", 0x0B))
+                direction = int(req.get("direction", 1))
+                group_colors = [tuple(c) for c in req.get("group_colors", [])] if req.get("group_colors") else None
+                key_offsets_rgb = req.get("key_offsets_rgb")
+                ok = self.device.set_keyboard_lighting(
+                    mode=mode,
+                    speed=speed,
+                    brightness=brightness,
+                    color_flag=color_flag,
+                    direction=direction,
+                    group_colors=group_colors,
+                    key_offsets_rgb=key_offsets_rgb,
+                )
+                return {"status": "ok" if ok else "error"}
+
             elif cmd == "apply_theme":
                 preset = req.get("name")
                 img_path = req.get("path")

@@ -215,6 +215,29 @@ class KB7Client:
         res = self._send_command("refresh_screen")
         return res.get("status") == "ok"
 
+    def set_keyboard_lighting(
+        self,
+        mode: int = 7,
+        speed: int = 6,
+        brightness: int = 100,
+        color_flag: int = 0x0B,
+        direction: int = 1,
+        group_colors: Optional[List[Tuple[int, int, int]]] = None,
+        key_offsets_rgb: Optional[Dict[Any, Tuple[int, int, int]]] = None,
+    ) -> bool:
+        """Configures the KB7 keyboard RGB backlight (Report 0x11, 348B)."""
+        res = self._send_command(
+            "set_keyboard_lighting",
+            mode=mode,
+            speed=speed,
+            brightness=brightness,
+            color_flag=color_flag,
+            direction=direction,
+            group_colors=group_colors,
+            key_offsets_rgb=key_offsets_rgb,
+        )
+        return res.get("status") == "ok"
+
     def apply_theme(self, name: Optional[str] = None, path: Optional[str] = None) -> bool:
         """Uploads and activates a theme via daemon (timeout 60s)."""
         res = self._send_command("apply_theme", timeout=60.0, name=name, path=path)
