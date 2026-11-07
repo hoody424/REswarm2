@@ -24,6 +24,7 @@ from .theme_generator import THEME_PRESETS
 from .image import convert_to_rgb565
 from .widgets import WIDGET_CATALOG, LAYOUT_TEMPLATES, lookup_widget
 from .device import KB7Device, SLOT_BACKGROUND
+from .steelseries import SteelSeriesSync, THEME_RGB_MAP
 
 # Design Palette
 COLOR_BG_DARK = "#0d1117"
@@ -74,6 +75,14 @@ class KB7CommandCenterApp:
         self.running = True
         self.active_tab = "mixer"
         self._ensure_hardware_service()
+
+        # SteelSeries Mouse RGB Synchronization
+        self.steelseries: Optional[SteelSeriesSync] = None
+        try:
+            self.steelseries = SteelSeriesSync()
+            self.steelseries.start()
+        except Exception as e:
+            print(f"[!] SteelSeries init warning: {e}")
 
         # Theme & Wallpaper State
         self.selected_theme_name = "tactical_hud"
@@ -499,12 +508,70 @@ class KB7CommandCenterApp:
         self.lbl_upload_status = tk.Label(right, text="Ready to upload.", font=("Segoe UI", 9), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD)
         self.lbl_upload_status.pack(padx=20)
 
+        # SteelSeries Mouse RGB Sync Section
+        f_ss = tk.Frame(right, bg="#10151f", bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        f_ss.pack(fill=tk.X, padx=20, pady=(10, 8))
+
+        f_ss_head = tk.Frame(f_ss, bg="#10151f")
+        f_ss_head.pack(fill=tk.X, padx=12, pady=(8, 4))
+
+        tk.Label(f_ss_head, text="🖱️ STEELSERIES MOUSE RGB SYNC", font=("Segoe UI", 9, "bold"), fg=COLOR_ACCENT, bg="#10151f").pack(side=tk.LEFT)
+        ss_status_txt = "● SteelSeries Aerox 3 verbunden" if (self.steelseries and self.steelseries.connected) else "SteelSeries nicht aktiv"
+        ss_status_col = "#00e575" if (self.steelseries and self.steelseries.connected) else COLOR_TEXT_MUTED
+        self.lbl_ss_status = tk.Label(f_ss_head, text=ss_status_txt, font=("Segoe UI", 8), fg=ss_status_col, bg="#10151f")
+        self.lbl_ss_status.pack(side=tk.RIGHT)
+
+        f_ss_opts = tk.Frame(f_ss, bg="#10151f")
+        f_ss_opts.pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        self.var_ss_auto_sync = tk.BooleanVar(value=True)
+        cb_ss_auto = tk.Checkbutton(
+            f_ss_opts, text="Maus-LEDs automatisch an gewähltes Display-Theme anpassen",
+            variable=self.var_ss_auto_sync, font=("Segoe UI", 8), fg=COLOR_TEXT_MAIN, bg="#10151f",
+            selectcolor=COLOR_BG_DARK, activebackground="#10151f", activeforeground=COLOR_TEXT_MAIN,
+            command=self._on_ss_auto_sync_toggle
+        )
+        cb_ss_auto.pack(side=tk.LEFT)
+
+        f_ss_colors = tk.Frame(f_ss, bg="#10151f")
+        f_ss_colors.pack(fill=tk.X, padx=12, pady=(0, 8))
+
+        quick_colors = [
+            ("Matrix Grün", (0, 255, 102), "#00FF66", "#000000"),
+            ("Toxic Neon", (57, 255, 20), "#39FF14", "#000000"),
+            ("Cyber Cyan", (0, 229, 255), "#00E5FF", "#000000"),
+            ("Neon Magenta", (255, 0, 128), "#FF0080", "#FFFFFF"),
+            ("Studio Gold", (230, 165, 30), "#E6A51E", "#000000"),
+            ("Cyber Purple", (160, 32, 240), "#A020F0", "#FFFFFF"),
+            ("Crimson Red", (255, 30, 50), "#FF1E32", "#FFFFFF"),
+            ("Pure White", (255, 255, 255), "#FFFFFF", "#000000"),
+        ]
+        for c_name, rgb, bg_hex, fg_hex in quick_colors:
+            btn_c = tk.Button(
+                f_ss_colors, text=c_name, font=("Segoe UI", 8, "bold"),
+                bg=bg_hex, fg=fg_hex, bd=0, padx=8, pady=3, cursor="hand2",
+                command=lambda r=rgb[0], g=rgb[1], b=rgb[2], n=c_name: self._set_mouse_color(r, g, b, n)
+            )
+            btn_c.pack(side=tk.LEFT, padx=(0, 6))
+
         # Initial Preview Render
         self._update_preview()
+
+    def _on_ss_auto_sync_toggle(self):
+        if self.steelseries and self.var_ss_auto_sync.get():
+            self.steelseries.sync_theme(self.theme_var.get())
+
+    def _set_mouse_color(self, r: int, g: int, b: int, name: str):
+        if self.steelseries:
+            ok = self.steelseries.set_color(r, g, b)
+            if ok:
+                self.lbl_ss_status.configure(text=f"Maus-Farbe: {name} ({r},{g},{b})", fg=COLOR_ACCENT)
 
     def _on_theme_selected(self):
         self.custom_image_path = None
         self._update_preview()
+        if self.steelseries and getattr(self, "var_ss_auto_sync", None) and self.var_ss_auto_sync.get():
+            self.steelseries.sync_theme(self.theme_var.get())
 
     def _browse_custom_image(self):
         path = filedialog.askopenfilename(
@@ -573,6 +640,9 @@ class KB7CommandCenterApp:
                 if self.var_switch_clean_page.get():
                     msg += " (Switched to clean Page 5)"
                     self.page_var.set(5)
+
+                if self.steelseries and self.var_ss_auto_sync.get():
+                    self.steelseries.sync_theme(self.theme_var.get())
                 self.root.after(0, lambda: self.lbl_upload_status.configure(text=msg, fg=COLOR_ACCENT))
                 self.root.after(0, self.refresh_slots_view)
             except Exception as e:
@@ -935,6 +1005,11 @@ class KB7CommandCenterApp:
 
     def on_close(self):
         self.running = False
+        if self.steelseries:
+            try:
+                self.steelseries.stop()
+            except Exception:
+                pass
         if self.client:
             try:
                 self.client.close()
