@@ -209,9 +209,18 @@ def cmd_theme(args):
 
     if args.list:
         print("Available Display Themes:")
-        print("  - tactical_hud     : Sci-Fi / Cyberpunk Tactical Cockpit (Cyan & Amber)")
-        print("  - audiophile_dark  : Studio Mixing Console & Analog VU Meter Deck (Gold & Charcoal)")
-        print("  - neon_cyberpunk   : Synthwave Cyberdeck (Electric Magenta & Cyan)")
+        descriptions = {
+            "matrix_cyberdeck": "Phosphor Green Code Rain & Mainframe HUD (Neon Emerald)",
+            "toxic_radar": "Apex / Mech Tactical HUD with 360° Sonar & Honeycomb Carbon (Toxic Green)",
+            "biohazard_reactor": "Quantum Fusion / Plasma Biohazard Core & Circuit Conduits (Emerald)",
+            "emerald_synthwave": "Retro-Futuristic Emerald Wireframe Grid & Rising Neon Sun",
+            "tactical_hud": "Sci-Fi / Cyberpunk Tactical Cockpit (Cyan & Amber)",
+            "audiophile_dark": "Studio Mixing Console & Analog VU Meter Deck (Gold & Charcoal)",
+            "neon_cyberpunk": "Synthwave Cyberdeck (Electric Magenta & Cyan)",
+        }
+        for k in THEME_PRESETS:
+            desc = descriptions.get(k, "Custom Theme Preset")
+            print(f"  - {k:<20}: {desc}")
         return 0
 
     name = (args.name or "tactical_hud").lower()

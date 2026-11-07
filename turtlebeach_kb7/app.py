@@ -370,26 +370,31 @@ class KB7CommandCenterApp:
         content.pack(fill=tk.BOTH, expand=True, pady=4)
 
         # Left Column: Presets & Controls
-        left = tk.Frame(content, bg=COLOR_BG_CARD, width=320, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        left = tk.Frame(content, bg=COLOR_BG_CARD, width=340, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
         left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         left.pack_propagate(False)
 
         lbl_presets = tk.Label(left, text="DISPLAY THEMES & HUD PRESETS", font=("Segoe UI", 10, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD)
-        lbl_presets.pack(anchor="w", padx=16, pady=(16, 12))
+        lbl_presets.pack(anchor="w", padx=16, pady=(12, 8))
 
         # Radio buttons for presets
-        self.theme_var = tk.StringVar(value="tactical_hud")
-        for key, label, desc in [
-            ("tactical_hud", "Tactical HUD Cockpit", "Cyberpunk Cyan & Gold Telemetry"),
-            ("audiophile_dark", "Audiophile Studio Deck", "Analog VU Meters & Brushed Gold"),
-            ("neon_cyberpunk", "Neon Cyberpunk", "Synthwave Magenta/Cyan Perspective"),
-        ]:
+        self.theme_var = tk.StringVar(value="matrix_cyberdeck")
+        theme_presets_ui = [
+            ("matrix_cyberdeck", "🟢 Matrix Cyberdeck", "Phosphor Green Code Rain & Terminal HUD"),
+            ("toxic_radar", "🟢 Toxic Mech Radar", "Apex Tactical 360° Sonar & Honeycomb"),
+            ("biohazard_reactor", "🟢 Biohazard Reactor", "Quantum Fusion Core & Radiant Plasma Conduits"),
+            ("emerald_synthwave", "🟢 Emerald Synthwave", "Retro Wireframe Grid & Sliced Neon Sun"),
+            ("tactical_hud", "🔷 Tactical Cockpit", "Cyberpunk Cyan & Gold Telemetry HUD"),
+            ("audiophile_dark", "🔶 Audiophile Dark", "Studio Console & Golden VU Meters"),
+            ("neon_cyberpunk", "🟣 Neon Cyberpunk", "Synthwave Magenta & Cyan Horizon"),
+        ]
+        for key, label, desc in theme_presets_ui:
             f_opt = tk.Frame(left, bg=COLOR_BG_CARD)
-            f_opt.pack(fill=tk.X, padx=16, pady=4)
+            f_opt.pack(fill=tk.X, padx=16, pady=2)
 
             rb = tk.Radiobutton(
                 f_opt, text=label, variable=self.theme_var, value=key,
-                font=("Segoe UI", 10, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
+                font=("Segoe UI", 9, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
                 selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
                 command=self._on_theme_selected
             )
@@ -401,10 +406,10 @@ class KB7CommandCenterApp:
         # Custom File Button
         btn_custom = tk.Button(
             left, text="📁 Choose Custom Image File...", font=("Segoe UI", 9),
-            bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=12, pady=6, cursor="hand2",
+            bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=12, pady=5, cursor="hand2",
             command=self._browse_custom_image
         )
-        btn_custom.pack(anchor="w", padx=16, pady=(12, 16))
+        btn_custom.pack(anchor="w", padx=16, pady=(8, 12))
 
         # Hardware Display Controls (Brightness, Timeout)
         tk.Label(left, text="HARDWARE SCREEN CONTROLS", font=("Segoe UI", 9, "bold"), fg=COLOR_ACCENT_ALT, bg=COLOR_BG_CARD).pack(anchor="w", padx=16, pady=(12, 4))
@@ -442,9 +447,9 @@ class KB7CommandCenterApp:
         opt_bar = tk.Frame(right, bg=COLOR_BG_CARD)
         opt_bar.pack(fill=tk.X, padx=20, pady=(4, 6))
 
-        self.var_switch_clean_page = tk.BooleanVar(value=True)
+        self.var_switch_clean_page = tk.BooleanVar(value=False)
         cb_clean = tk.Checkbutton(
-            opt_bar, text="Switch to clean Page 5 after upload (unobstructed)",
+            opt_bar, text="Nach Upload auf leere Seite 5 wechseln",
             variable=self.var_switch_clean_page,
             font=("Segoe UI", 9), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
             selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD, activeforeground=COLOR_TEXT_MAIN
@@ -452,7 +457,7 @@ class KB7CommandCenterApp:
         cb_clean.pack(side=tk.LEFT)
 
         btn_reset_theme = tk.Button(
-            opt_bar, text="↺ Reset to Factory Wallpaper", font=("Segoe UI", 8),
+            opt_bar, text="↺ Werkseinstellung Hintergrund", font=("Segoe UI", 8),
             bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MUTED, bd=0, padx=8, pady=3, cursor="hand2",
             command=self._reset_factory_theme
         )
