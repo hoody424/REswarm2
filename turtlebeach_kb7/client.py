@@ -195,6 +195,11 @@ class KB7Client:
         res = self._send_command("apply_template", page=page, name=template_name)
         return res.get("status") == "ok"
 
+    def apply_streamdeck(self, slots: List[Dict[str, Any]], page: int = 3, small_tiles: bool = True) -> bool:
+        """Applies a 12-slot Smart Stream Deck configuration to the specified page."""
+        res = self._send_command("apply_streamdeck", slots=slots, page=page, small_tiles=small_tiles)
+        return res.get("status") == "ok"
+
     def set_background_mode(self, mode: int = 1) -> bool:
         """Sets custom background mode (1=custom wallpaper, 0=built-in default)."""
         res = self._send_command("set_background_mode", mode=mode)

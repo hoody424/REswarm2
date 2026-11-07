@@ -25,6 +25,12 @@ from .image import convert_to_rgb565
 from .widgets import WIDGET_CATALOG, LAYOUT_TEMPLATES, lookup_widget
 from .device import KB7Device, SLOT_BACKGROUND
 from .steelseries import SteelSeriesSync, THEME_RGB_MAP
+from .streamdeck import (
+    SmartStreamDeckManager,
+    STREAMDECK_ACTIONS,
+    STREAMDECK_PROFILES,
+    capture_screen_snapshot_for_kb7,
+)
 
 # Design Palette
 COLOR_BG_DARK = "#0d1117"
@@ -89,6 +95,11 @@ class KB7CommandCenterApp:
         self.preview_image_tk: Optional[ImageTk.PhotoImage] = None
         self.custom_image_path: Optional[str] = None
 
+        # Smart Stream Deck Engine
+        self.streamdeck = SmartStreamDeckManager()
+        self.selected_sd_slot: int = 0
+        self._last_touch_time: float = 0.0
+
         # Build Navigation & Main Views
         self._build_header()
         self._build_tabs()
@@ -129,11 +140,18 @@ class KB7CommandCenterApp:
                 self._handle_touch_event(ev)
 
     def _handle_touch_event(self, ev: Dict[str, Any]):
-        """Logs and handles touch events from the display."""
+        """Logs and handles touch events from the display, including Smart Stream Deck actions."""
         gesture = ev.get("gesture")
         slot = ev.get("slot_id")
         line = f"[{time.strftime('%H:%M:%S')}] Touch: {gesture:<11} | Slot={slot:2d} | Coord=({ev.get('x')}, {ev.get('y')})"
         self.root.after(0, lambda: self._append_log(line))
+
+        # Trigger Smart Stream Deck host action when a tile (0..11) is tapped on the KB7 screen
+        if gesture in ("tap", "up") and isinstance(slot, int) and 0 <= slot < 12:
+            now = time.time()
+            if now - self._last_touch_time > 0.35 and getattr(self, "var_sd_touch_bridge", None) and self.var_sd_touch_bridge.get():
+                self._last_touch_time = now
+                self.root.after(0, lambda s=slot: self._trigger_streamdeck_slot(s, from_hw=True))
 
     def _build_header(self):
         """Top Brand Header Bar."""
@@ -169,6 +187,7 @@ class KB7CommandCenterApp:
 
         tabs = [
             ("mixer", "🔊 Windows Sound Mixer"),
+            ("streamdeck", "🎛️ Smart Stream Deck"),
             ("themes", "🎨 Display Themes & Wallpaper"),
             ("widgets", "🧩 Widgets & Display Pages"),
             ("hardware", "⚡ Hardware & Touch Logs"),
@@ -192,11 +211,12 @@ class KB7CommandCenterApp:
 
         # Build individual views
         self._build_mixer_tab(self.tab_frames["mixer"])
+        self._build_streamdeck_tab(self.tab_frames["streamdeck"])
         self._build_themes_tab(self.tab_frames["themes"])
         self._build_widgets_tab(self.tab_frames["widgets"])
         self._build_hardware_tab(self.tab_frames["hardware"])
 
-        self.switch_tab("mixer")
+        self.switch_tab("streamdeck")
 
     def switch_tab(self, active_key: str):
         """Switches active view."""
@@ -716,6 +736,381 @@ class KB7CommandCenterApp:
                 pass
 
     # =========================================================================
+    # TAB 2B: SMART STREAM DECK (12x 1x1 COMPACT TILES ON PAGE 3)
+    # =========================================================================
+
+    def _build_streamdeck_tab(self, parent: tk.Frame):
+        # Top Control & Profile Bar
+        top_bar = tk.Frame(parent, bg=COLOR_BG_CARD, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        top_bar.pack(fill=tk.X, pady=(2, 6))
+
+        row1 = tk.Frame(top_bar, bg=COLOR_BG_CARD)
+        row1.pack(fill=tk.X, padx=14, pady=(10, 4))
+
+        tk.Label(row1, text="DECK-PROFILE (12× 1x1 KLEINE KACHELN):", font=("Segoe UI", 9, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 8))
+
+        deck_profiles = [
+            ("stream_media", "🎬 Stream & Media"),
+            ("obs_creator", "🎥 OBS & Creator"),
+            ("gaming_discord", "🎮 Gaming & Discord"),
+            ("mini_telemetry", "📊 12× Mini-Telemetrie"),
+        ]
+        for prof_key, prof_lbl in deck_profiles:
+            btn_p = tk.Button(
+                row1, text=prof_lbl, font=("Segoe UI", 8, "bold"),
+                bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=10, pady=4, cursor="hand2",
+                command=lambda pk=prof_key: self._load_streamdeck_profile(pk)
+            )
+            btn_p.pack(side=tk.LEFT, padx=3)
+
+        btn_sync_hw = tk.Button(
+            row1, text="⚡ AUF KB7 SEITE 3 FLASHEN & AKTIVIEREN", font=("Segoe UI", 9, "bold"),
+            bg="#00e575", fg="#000000", activebackground="#00ff88", bd=0, padx=14, pady=5, cursor="hand2",
+            command=self._sync_streamdeck_to_kb7
+        )
+        btn_sync_hw.pack(side=tk.RIGHT, padx=(6, 0))
+
+        btn_snap = tk.Button(
+            row1, text="📸 Live-Snapshot -> KB7", font=("Segoe UI", 8, "bold"),
+            bg=COLOR_ACCENT, fg="#000000", bd=0, padx=10, pady=5, cursor="hand2",
+            command=self._push_live_snapshot_to_kb7
+        )
+        btn_snap.pack(side=tk.RIGHT, padx=4)
+
+        # Row 2: Tile Size Controls (UI & Hardware) + Touch Bridge Toggle
+        row2 = tk.Frame(top_bar, bg=COLOR_BG_CARD)
+        row2.pack(fill=tk.X, padx=14, pady=(2, 8))
+
+        tk.Label(row2, text="UI-KACHELGRÖẞE:", font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 6))
+
+        self.var_sd_ui_size = tk.StringVar(value=self.streamdeck.ui_tile_size)
+        for sz_val, sz_lbl in [("small", "Klein (Kompakt)"), ("medium", "Mittel"), ("large", "Groß")]:
+            rb = tk.Radiobutton(
+                row2, text=sz_lbl, variable=self.var_sd_ui_size, value=sz_val,
+                font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
+                selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
+                command=self._on_sd_tile_size_changed
+            )
+            rb.pack(side=tk.LEFT, padx=3)
+
+        tk.Label(row2, text="  |  KB7 DISPLAY-KACHELGRÖẞE:", font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(8, 4))
+
+        self.var_sd_hw_small = tk.BooleanVar(value=self.streamdeck.hw_small_tiles)
+        cb_hw_sz = tk.Checkbutton(
+            row2, text="1x1 Kleine Kacheln erzwingen (alle 12 Slots im 4×3 Raster)",
+            variable=self.var_sd_hw_small, font=("Segoe UI", 8, "bold"), fg="#00e575", bg=COLOR_BG_CARD,
+            selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
+            command=self._on_sd_tile_size_changed
+        )
+        cb_hw_sz.pack(side=tk.LEFT, padx=4)
+
+        self.var_sd_touch_bridge = tk.BooleanVar(value=True)
+        cb_touch = tk.Checkbutton(
+            row2, text="Touchscreen-Aktionen aktiv",
+            variable=self.var_sd_touch_bridge, font=("Segoe UI", 8), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
+            selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD
+        )
+        cb_touch.pack(side=tk.RIGHT, padx=4)
+
+        # Main Split Area: Left = 4x3 Compact Stream Deck Grid, Right = Smart Tile Inspector
+        body = tk.Frame(parent, bg=COLOR_BG_DARK)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # Left Grid Container
+        self.sd_grid_card = tk.Frame(body, bg=COLOR_BG_CARD, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        self.sd_grid_card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8), pady=2)
+
+        grid_head = tk.Frame(self.sd_grid_card, bg=COLOR_BG_CARD)
+        grid_head.pack(fill=tk.X, padx=14, pady=(10, 4))
+
+        tk.Label(
+            grid_head, text="🎛️ INTERAKTIVES 4×3 STREAM DECK RASTER (KLICK = AUSFÜHREN & AUSWÄHLEN)",
+            font=("Segoe UI", 9, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD
+        ).pack(side=tk.LEFT)
+
+        self.lbl_sd_status = tk.Label(
+            grid_head, text="Bereit (Seite 3 • 12× 1x1 Kleine Kacheln)",
+            font=("Segoe UI", 8, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD
+        )
+        self.lbl_sd_status.pack(side=tk.RIGHT)
+
+        self.sd_grid_frame = tk.Frame(self.sd_grid_card, bg=COLOR_BG_CARD)
+        self.sd_grid_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+
+        # Right Inspector Card
+        insp = tk.Frame(body, bg=COLOR_BG_CARD, width=290, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        insp.pack(side=tk.RIGHT, fill=tk.Y, pady=2)
+        insp.pack_propagate(False)
+
+        tk.Label(insp, text="⚙ KACHEL ANPASSEN", font=("Segoe UI", 10, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD).pack(anchor="w", padx=14, pady=(12, 4))
+
+        self.lbl_sd_edit_slot = tk.Label(insp, text="Ausgewählt: Slot 0 (Oben Links)", font=("Segoe UI", 9, "bold"), fg="#00e575", bg=COLOR_BG_CARD)
+        self.lbl_sd_edit_slot.pack(anchor="w", padx=14, pady=(0, 8))
+
+        # Icon + Title
+        f_it = tk.Frame(insp, bg=COLOR_BG_CARD)
+        f_it.pack(fill=tk.X, padx=14, pady=3)
+        tk.Label(f_it, text="Icon & Titel:", font=("Segoe UI", 8), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(anchor="w")
+
+        row_it = tk.Frame(f_it, bg=COLOR_BG_CARD)
+        row_it.pack(fill=tk.X, pady=2)
+        self.ent_sd_icon = tk.Entry(row_it, width=4, font=("Segoe UI", 10), bg=COLOR_BG_DARK, fg=COLOR_TEXT_MAIN, insertbackground=COLOR_TEXT_MAIN, bd=1)
+        self.ent_sd_icon.pack(side=tk.LEFT, padx=(0, 6))
+        self.ent_sd_title = tk.Entry(row_it, font=("Segoe UI", 9, "bold"), bg=COLOR_BG_DARK, fg=COLOR_TEXT_MAIN, insertbackground=COLOR_TEXT_MAIN, bd=1)
+        self.ent_sd_title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Subtitle
+        f_sub = tk.Frame(insp, bg=COLOR_BG_CARD)
+        f_sub.pack(fill=tk.X, padx=14, pady=3)
+        tk.Label(f_sub, text="Untertitel (Info):", font=("Segoe UI", 8), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(anchor="w")
+        self.ent_sd_subtitle = tk.Entry(f_sub, font=("Segoe UI", 9), bg=COLOR_BG_DARK, fg=COLOR_TEXT_MAIN, insertbackground=COLOR_TEXT_MAIN, bd=1)
+        self.ent_sd_subtitle.pack(fill=tk.X, pady=2)
+
+        # KB7 Hardware Label (max 11 chars for Report 0x29)
+        f_hwlbl = tk.Frame(insp, bg=COLOR_BG_CARD)
+        f_hwlbl.pack(fill=tk.X, padx=14, pady=3)
+        tk.Label(f_hwlbl, text="KB7 Display-Text (max. 11 Zeichen):", font=("Segoe UI", 8), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(anchor="w")
+        self.ent_sd_hw_label = tk.Entry(f_hwlbl, font=("Consolas", 9, "bold"), bg=COLOR_BG_DARK, fg="#00e575", insertbackground=COLOR_TEXT_MAIN, bd=1)
+        self.ent_sd_hw_label.pack(fill=tk.X, pady=2)
+
+        # Smart Action Dropdown
+        f_act = tk.Frame(insp, bg=COLOR_BG_CARD)
+        f_act.pack(fill=tk.X, padx=14, pady=3)
+        tk.Label(f_act, text="Smart-Aktion (PC / Stream / Hotkey):", font=("Segoe UI", 8), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(anchor="w")
+
+        self._sd_action_labels: List[str] = []
+        self._sd_label_to_action: Dict[str, str] = {}
+        self._sd_action_to_label: Dict[str, str] = {}
+        for act_id, meta in STREAMDECK_ACTIONS.items():
+            lbl = meta["name"]
+            self._sd_action_labels.append(lbl)
+            self._sd_label_to_action[lbl] = act_id
+            self._sd_action_to_label[act_id] = lbl
+
+        self.cb_sd_action = ttk.Combobox(f_act, values=self._sd_action_labels, state="readonly")
+        self.cb_sd_action.pack(fill=tk.X, pady=2)
+
+        # KB7 Hardware 1x1 Tile Type Dropdown
+        f_hw = tk.Frame(insp, bg=COLOR_BG_CARD)
+        f_hw.pack(fill=tk.X, padx=14, pady=3)
+        tk.Label(f_hw, text="KB7 Hardware-Kachel (1x1 Klein):", font=("Segoe UI", 8), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(anchor="w")
+
+        self._sd_hw_choices: List[str] = []
+        self._sd_hw_map: Dict[str, int] = {}
+        for app_id, w in sorted(WIDGET_CATALOG.items(), key=lambda x: (x[1].span != (1, 1), x[1].category, x[1].name)):
+            span_tag = "1x1 Klein" if w.span == (1, 1) else f"{w.span[0]}x{w.span[1]} Groß"
+            lbl = f"[{span_tag}] {w.name} (#{app_id})"
+            self._sd_hw_choices.append(lbl)
+            self._sd_hw_map[lbl] = app_id
+
+        self.cb_sd_hw_widget = ttk.Combobox(f_hw, values=self._sd_hw_choices, state="readonly")
+        self.cb_sd_hw_widget.pack(fill=tk.X, pady=2)
+
+        # Save & Test Buttons
+        btn_save_tile = tk.Button(
+            insp, text="💾 Kachel speichern & auf KB7 senden", font=("Segoe UI", 9, "bold"),
+            bg=COLOR_ACCENT, fg="#000000", bd=0, padx=12, pady=7, cursor="hand2",
+            command=self._save_streamdeck_tile
+        )
+        btn_save_tile.pack(fill=tk.X, padx=14, pady=(12, 4))
+
+        btn_test_tile = tk.Button(
+            insp, text="▶ Aktion jetzt testen", font=("Segoe UI", 8, "bold"),
+            bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=12, pady=5, cursor="hand2",
+            command=lambda: self._trigger_streamdeck_slot(self.selected_sd_slot, from_hw=False)
+        )
+        btn_test_tile.pack(fill=tk.X, padx=14, pady=2)
+
+        self._render_streamdeck_grid()
+        self._select_streamdeck_slot(0)
+
+    def _on_sd_tile_size_changed(self):
+        self.streamdeck.ui_tile_size = self.var_sd_ui_size.get()
+        self.streamdeck.hw_small_tiles = bool(self.var_sd_hw_small.get())
+        self.streamdeck.save_config()
+        self._render_streamdeck_grid()
+
+    def _render_streamdeck_grid(self):
+        for child in self.sd_grid_frame.winfo_children():
+            child.destroy()
+
+        sz = self.streamdeck.ui_tile_size
+        if sz == "small":
+            pad_x, pad_y = 4, 4
+            icon_font = ("Segoe UI Emoji", 13, "bold")
+            title_font = ("Segoe UI", 8, "bold")
+            sub_font = ("Segoe UI", 7)
+            badge_font = ("Consolas", 7)
+        elif sz == "medium":
+            pad_x, pad_y = 6, 6
+            icon_font = ("Segoe UI Emoji", 16, "bold")
+            title_font = ("Segoe UI", 9, "bold")
+            sub_font = ("Segoe UI", 8)
+            badge_font = ("Consolas", 7)
+        else:
+            pad_x, pad_y = 8, 8
+            icon_font = ("Segoe UI Emoji", 20, "bold")
+            title_font = ("Segoe UI", 10, "bold")
+            sub_font = ("Segoe UI", 8)
+            badge_font = ("Consolas", 8)
+
+        for r in range(3):
+            self.sd_grid_frame.rowconfigure(r, weight=1, uniform="sd_row")
+        for c in range(4):
+            self.sd_grid_frame.columnconfigure(c, weight=1, uniform="sd_col")
+
+        for idx, tile in enumerate(self.streamdeck.tiles[:12]):
+            r, c = divmod(idx, 4)
+            is_sel = (idx == self.selected_sd_slot)
+            border_col = tile.color if is_sel else COLOR_BORDER
+            border_w = 2 if is_sel else 1
+            bg_col = "#1a2230" if is_sel else "#111620"
+
+            cell = tk.Frame(
+                self.sd_grid_frame, bg=bg_col, bd=0,
+                highlightthickness=border_w, highlightbackground=border_col, cursor="hand2"
+            )
+            cell.grid(row=r, column=c, sticky="nsew", padx=pad_x, pady=pad_y)
+
+            # Top row inside tile: Slot # + 1x1 HW label badge
+            top_line = tk.Frame(cell, bg=bg_col)
+            top_line.pack(fill=tk.X, padx=6, pady=(4, 0))
+
+            lbl_s = tk.Label(top_line, text=f"S{idx}", font=badge_font, fg=COLOR_TEXT_MUTED, bg=bg_col)
+            lbl_s.pack(side=tk.LEFT)
+
+            hw_tag = "1x1" if self.streamdeck.hw_small_tiles else "2x1"
+            lbl_hw = tk.Label(top_line, text=f"[{hw_tag}: {tile.hw_label or tile.hw_app_id}]", font=badge_font, fg=tile.color, bg=bg_col)
+            lbl_hw.pack(side=tk.RIGHT)
+
+            # Center Icon & Title
+            lbl_ico = tk.Label(cell, text=tile.icon, font=icon_font, fg=tile.color, bg=bg_col, cursor="hand2")
+            lbl_ico.pack(pady=(1, 0))
+
+            lbl_t = tk.Label(cell, text=tile.title, font=title_font, fg=COLOR_TEXT_MAIN, bg=bg_col, cursor="hand2")
+            lbl_t.pack()
+
+            lbl_sub = tk.Label(cell, text=tile.subtitle, font=sub_font, fg=COLOR_TEXT_MUTED, bg=bg_col, cursor="hand2")
+            lbl_sub.pack(pady=(0, 3))
+
+            for w in (cell, top_line, lbl_s, lbl_hw, lbl_ico, lbl_t, lbl_sub):
+                w.bind("<Button-1>", lambda e, s=idx: self._on_sd_tile_clicked(s))
+
+    def _on_sd_tile_clicked(self, slot_index: int):
+        self._select_streamdeck_slot(slot_index)
+        self._trigger_streamdeck_slot(slot_index, from_hw=False)
+
+    def _select_streamdeck_slot(self, slot_index: int):
+        self.selected_sd_slot = slot_index
+        tile = self.streamdeck.tiles[slot_index]
+        self.lbl_sd_edit_slot.configure(text=f"Ausgewählt: Slot {slot_index} (Zeile {slot_index // 4 + 1}, Spalte {slot_index % 4 + 1})")
+
+        self.ent_sd_icon.delete(0, tk.END)
+        self.ent_sd_icon.insert(0, tile.icon)
+
+        self.ent_sd_title.delete(0, tk.END)
+        self.ent_sd_title.insert(0, tile.title)
+
+        self.ent_sd_subtitle.delete(0, tk.END)
+        self.ent_sd_subtitle.insert(0, tile.subtitle)
+
+        self.ent_sd_hw_label.delete(0, tk.END)
+        self.ent_sd_hw_label.insert(0, tile.hw_label)
+
+        act_lbl = self._sd_action_to_label.get(tile.action_id, self._sd_action_labels[0])
+        self.cb_sd_action.set(act_lbl)
+
+        # Match hardware widget
+        matched_hw = self._sd_hw_choices[0]
+        for ch, aid in self._sd_hw_map.items():
+            if aid == tile.hw_app_id:
+                matched_hw = ch
+                break
+        self.cb_sd_hw_widget.set(matched_hw)
+        self._render_streamdeck_grid()
+
+    def _trigger_streamdeck_slot(self, slot_index: int, from_hw: bool = False):
+        msg = self.streamdeck.execute_tile_action(
+            slot_index,
+            mixer=self.mixer,
+            steelseries=self.steelseries,
+            snapshot_callback=self._push_live_snapshot_to_kb7,
+        )
+        prefix = "[KB7 Touch]" if from_hw else "[Stream Deck]"
+        self.lbl_sd_status.configure(text=f"{prefix} {msg}", fg="#00e575")
+
+    def _save_streamdeck_tile(self):
+        idx = self.selected_sd_slot
+        tile = self.streamdeck.tiles[idx]
+        tile.icon = self.ent_sd_icon.get().strip() or "⚡"
+        tile.title = self.ent_sd_title.get().strip() or f"SLOT {idx}"
+        tile.subtitle = self.ent_sd_subtitle.get().strip()
+        tile.hw_label = self.ent_sd_hw_label.get().strip()[:11]
+        tile.action_id = self._sd_label_to_action.get(self.cb_sd_action.get(), "none")
+        tile.hw_app_id = self._sd_hw_map.get(self.cb_sd_hw_widget.get(), 12)
+
+        self.streamdeck.save_config()
+        self._render_streamdeck_grid()
+        self._sync_streamdeck_to_kb7()
+
+    def _load_streamdeck_profile(self, profile_name: str):
+        self.streamdeck.load_profile(profile_name)
+        self._select_streamdeck_slot(0)
+        self._sync_streamdeck_to_kb7()
+
+    def _sync_streamdeck_to_kb7(self):
+        """Flashes the 12 compact 1x1 Stream Deck tiles + custom labels to Page 3 of the KB7."""
+        def worker():
+            self.root.after(0, lambda: self.lbl_sd_status.configure(text="Übertrage 12× 1x1 Stream Deck Kacheln auf KB7 Seite 3...", fg=COLOR_ACCENT))
+            try:
+                slots_cfg = self.streamdeck.to_hw_slots_config()
+                small = self.streamdeck.hw_small_tiles
+                if self.daemon and self.daemon.device:
+                    with self.daemon.lock:
+                        self.daemon.device.apply_streamdeck_page(slots_cfg, page_index=2, small_tiles=small)
+                elif self.client and self.hw_connected:
+                    self.client.apply_streamdeck(slots_cfg, page=3, small_tiles=small)
+                else:
+                    with KB7Device() as dev:
+                        dev.apply_streamdeck_page(slots_cfg, page_index=2, small_tiles=small)
+
+                self.page_var.set(3)
+                self.root.after(0, self.refresh_slots_view)
+                self.root.after(0, lambda: self.lbl_sd_status.configure(
+                    text="✓ Stream Deck (12× 1x1 kleine Kacheln) aktiv auf KB7 Seite 3!", fg="#00e575"
+                ))
+            except Exception as e:
+                self.root.after(0, lambda: self.lbl_sd_status.configure(text=f"[!] Sync-Fehler: {e}", fg=COLOR_MUTE_ACTIVE))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _push_live_snapshot_to_kb7(self):
+        """Captures a live screen/stream snapshot and uploads it to the KB7 display."""
+        def worker():
+            self.root.after(0, lambda: self.lbl_sd_status.configure(text="📸 Erfasse Live-Snapshot für KB7 (480×800)...", fg=COLOR_ACCENT))
+            try:
+                snap_im = capture_screen_snapshot_for_kb7("LIVE STREAM SNAPSHOT")
+
+                def prog_cb(msg: str, pct: int):
+                    self.root.after(0, lambda: self.lbl_sd_status.configure(text=f"📸 Snapshot Upload: {pct}%", fg=COLOR_ACCENT))
+
+                if self.daemon and self.daemon.device:
+                    with self.daemon.lock:
+                        self.daemon.device.upload_theme(snap_im, progress_callback=prog_cb)
+                elif self.client and self.hw_connected:
+                    with KB7Device() as dev:
+                        dev.upload_theme(snap_im, progress_callback=prog_cb)
+                else:
+                    with KB7Device() as dev:
+                        dev.upload_theme(snap_im, progress_callback=prog_cb)
+
+                self.root.after(0, lambda: self.lbl_sd_status.configure(text="✓ Live-Snapshot auf KB7 Display aktiv!", fg="#00e575"))
+            except Exception as e:
+                self.root.after(0, lambda: self.lbl_sd_status.configure(text=f"[!] Snapshot-Fehler: {e}", fg=COLOR_MUTE_ACTIVE))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # =========================================================================
     # TAB 3: WIDGETS & DISPLAY PAGES
     # =========================================================================
 
@@ -733,7 +1128,7 @@ class KB7CommandCenterApp:
         page_labels = [
             (1, "Page 1 (Home / 12 Kacheln)"),
             (2, "Page 2 (Numpad)"),
-            (3, "Page 3 (Telemetrie & Shortcuts)"),
+            (3, "Page 3 (🎛️ Smart Stream Deck / 12× 1x1)"),
         ]
         for p, p_lbl in page_labels:
             btn_p = tk.Radiobutton(
@@ -752,9 +1147,10 @@ class KB7CommandCenterApp:
         tmpl_row.pack(fill=tk.X, padx=16, pady=4)
 
         templates = [
+            ("streamdeck", "🎛️ Smart Stream Deck (12× 1x1)", "#00e575", "#000000"),
             ("dashboard", "⚡ Power Dashboard", COLOR_ACCENT, "#000000"),
             ("factory", "↺ Werkseinstellung", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
-            ("telemetry", "📊 Telemetrie", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
+            ("telemetry", "📊 Telemetrie (12× 1x1 Mini)", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
             ("productivity", "💼 Productivity", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
             ("multimedia", "🎵 Media Controls", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
             ("gaming", "🎮 Gaming & Discord", COLOR_BG_HOVER, COLOR_TEXT_MAIN),

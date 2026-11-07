@@ -293,6 +293,13 @@ class KB7Daemon:
                 ok = self.device.apply_template(page - 1, tmpl_name)
                 return {"status": "ok" if ok else "error", "page": page, "template": tmpl_name}
 
+            elif cmd == "apply_streamdeck":
+                page = int(req.get("page", 3))
+                slots_cfg = req.get("slots", [])
+                small_tiles = bool(req.get("small_tiles", True))
+                ok = self.device.apply_streamdeck_page(slots_cfg, page_index=page - 1, small_tiles=small_tiles)
+                return {"status": "ok" if ok else "error", "page": page}
+
             elif cmd == "set_background_mode":
                 mode = int(req.get("mode", 1))
                 ok = self.device.set_background_mode(mode)

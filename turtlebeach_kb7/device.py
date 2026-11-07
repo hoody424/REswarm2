@@ -764,13 +764,21 @@ class KB7Device:
 
     def set_active_page(self, page_index: int) -> bool:
         """
-        Switch the active LCD page (`0`..`2` or `1`..`3`).
+        Switch the active LCD page (`1`..`3`).
         """
+        page = max(1, min(3, int(page_index)))
         lcd_buf = self.get_lcd_settings()
-        lcd_buf[6] = 1
+        lcd_buf[6] = page
         return self.send_feature_report(lcd_buf, add_checksum=True)
 
-    def _update_screen_key_slot(self, page_index: int, slot_index: int, app_id: int) -> None:
+    def _update_screen_key_slot(
+        self,
+        page_index: int,
+        slot_index: int,
+        app_id: int,
+        custom_label: Optional[str] = None,
+        custom_hid_code: Optional[int] = None,
+    ) -> None:
         """
         Update the 16-byte entry in Report `0x29` (`ScreenKeys`, 584 bytes) at
         `offset = 6 + (page_index * 12 + slot_index) * 16` (`0x00295650` in `COMMAND_KB7.dll`).
@@ -779,7 +787,13 @@ class KB7Device:
             return
         off = 6 + (page_index * 12 + slot_index) * 16
         self._screen_keys_cache[off : off + 16] = b"\x00" * 16
-        if app_id in SCREEN_KEY_BINDINGS:
+        if custom_label is not None:
+            hid_code = custom_hid_code if custom_hid_code is not None else SCREEN_KEY_BINDINGS.get(app_id, (0x00, ""))[0]
+            self._screen_keys_cache[off + 2] = hid_code & 0xFF
+            self._screen_keys_cache[off + 3] = 0x0C
+            enc = custom_label.encode("ascii", errors="ignore")[:11]
+            self._screen_keys_cache[off + 5 : off + 5 + len(enc)] = enc
+        elif app_id in SCREEN_KEY_BINDINGS:
             hid_code, label = SCREEN_KEY_BINDINGS[app_id]
             self._screen_keys_cache[off + 2] = hid_code
             self._screen_keys_cache[off + 3] = 0x0C
@@ -793,6 +807,8 @@ class KB7Device:
         arg2: int,
         arg3: Optional[int] = None,
         page_index: Optional[int] = None,
+        custom_label: Optional[str] = None,
+        custom_hid_code: Optional[int] = None,
     ) -> bool:
         """
         Assign a widget (`app_id`) to a slot on `page_index` (`0`..`2`), `slot_index` (`0`..`11`).
@@ -820,28 +836,96 @@ class KB7Device:
         w_type, w_id = APP_ID_TO_FIRMWARE.get(app_id, (0, 0))
 
         # 1. Update and send Report 0x29 (ScreenKeys, 584B)
-        self._update_screen_key_slot(p_idx, slot_idx, app_id)
+        self._update_screen_key_slot(
+            p_idx, slot_idx, app_id, custom_label=custom_label, custom_hid_code=custom_hid_code
+        )
         self.send_feature_report(self._screen_keys_cache, add_checksum=True, post_delay_sec=0.030)
 
         # 2. Update Report 0x25 (LCDSettings, 164B) at 10 + page_index * 52 + slot_index * 4
         lcd_buf = self.get_lcd_settings()
-        lcd_buf[6] = 1
+        lcd_buf[6] = (p_idx + 1) & 0xFF
         slot_off = 10 + (p_idx * 52) + (slot_idx * 4)
         struct.pack_into("<HH", lcd_buf, slot_off, w_type, w_id)
         struct.pack_into("<HH", lcd_buf, 10 + 12 * 4, 2, 0)
         struct.pack_into("<HH", lcd_buf, 62 + 12 * 4, 3, 0)
         self.send_feature_report(lcd_buf, add_checksum=True, post_delay_sec=0.030)
 
-        # 3. Send Report 0x35 (12-byte single-slot notification, 0x0029CB15)
+        # 3. Send Report 0x35 (12-byte single-slot notification, 0x0029CAE5..0x0029CB15)
         slot_buf = bytearray(12)
         slot_buf[0] = REPORT_ID_SLOT_UPDATE
         slot_buf[1] = 0x0C
-        slot_buf[2] = 0x00
-        slot_buf[3] = p_idx & 0xFF
-        slot_buf[4] = slot_idx & 0xFF
+        slot_buf[2] = (p_idx + 1) & 0xFF
+        slot_buf[3] = slot_idx & 0xFF
+        slot_buf[4] = 0x01
         slot_buf[5] = 0x00
         struct.pack_into("<HH", slot_buf, 6, w_type, w_id)
         return self.send_feature_report(slot_buf, add_checksum=True, post_delay_sec=0.030)
+
+    def apply_streamdeck_page(
+        self,
+        slots_config: List[dict],
+        page_index: int = 2,
+        small_tiles: bool = True,
+    ) -> bool:
+        """
+        Write a 12-slot Smart Stream Deck layout (`slots_config`) to `page_index` (default: `2` = Page 3).
+        When `small_tiles=True`, guarantees that all 12 slots use `1x1` compact firmware tile IDs
+        so that all 12 tiles fit simultaneously in the 4x3 grid on the KB7 screen, and writes
+        custom 11-character ASCII labels to Report `0x29` (`ScreenKeys`) for `w_type == 3` tiles.
+        """
+        p_idx = max(0, min(2, int(page_index)))
+        lcd_buf = self.get_lcd_settings()
+        lcd_buf[6] = (p_idx + 1) & 0xFF
+
+        # Map any 2x1 large app_id to its 1x1 mini equivalent when small_tiles=True
+        large_to_small = {
+            1: 2,       # Numpad 0 (2x1) -> 1x1 key
+            1000: 1008, # CPU Usage (2x1) -> CPU Load Mini (1x1)
+            1001: 1008, # System Overview -> CPU Load Mini (1x1)
+            1002: 1007, # GPU Usage (2x1) -> GPU Load Mini (1x1)
+            1003: 1010, # RAM Usage (2x1) -> RAM Load Mini (1x1)
+            1004: 1006, # CPU Temp (2x1) -> CPU Temp Mini (1x1)
+            1005: 1009, # GPU Temp (2x1) -> GPU Temp Mini (1x1)
+            1024: 1014, # Digital Clock (2x1) -> Analog Clock (1x1)
+            1025: 35,   # Media Player (4x2) -> Media Play/Pause (1x1)
+            1028: 1013, # Network Monitor (2x1) -> Network Speed (1x1)
+        }
+        small_to_large = {
+            1008: 1000,
+            1007: 1002,
+            1010: 1003,
+            1006: 1004,
+            1009: 1005,
+            1014: 1024,
+        }
+
+        for slot_idx in range(12):
+            cfg = slots_config[slot_idx] if slot_idx < len(slots_config) else {}
+            app_id = int(cfg.get("hw_app_id", cfg.get("app_id", 0)))
+            hw_label = cfg.get("hw_label")
+            hid_code = cfg.get("hid_code", 0x00)
+
+            if small_tiles and app_id in large_to_small:
+                app_id = large_to_small[app_id]
+            elif not small_tiles and app_id in small_to_large and (slot_idx % 2 == 0):
+                app_id = small_to_large[app_id]
+
+            w_type, w_id = APP_ID_TO_FIRMWARE.get(app_id, (0, 0))
+            slot_off = 10 + (p_idx * 52) + (slot_idx * 4)
+            struct.pack_into("<HH", lcd_buf, slot_off, w_type, w_id)
+
+            if w_type == 3 and hw_label:
+                self._update_screen_key_slot(
+                    p_idx, slot_idx, app_id, custom_label=str(hw_label)[:11], custom_hid_code=int(hid_code)
+                )
+            else:
+                self._update_screen_key_slot(p_idx, slot_idx, app_id)
+
+        struct.pack_into("<HH", lcd_buf, 10 + 12 * 4, 2, 0)
+        struct.pack_into("<HH", lcd_buf, 62 + 12 * 4, 3, 0)
+
+        self.send_feature_report(self._screen_keys_cache, add_checksum=True, post_delay_sec=0.050)
+        return self.send_feature_report(lcd_buf, add_checksum=True, post_delay_sec=0.050)
 
     def apply_template(
         self,
@@ -875,7 +959,7 @@ class KB7Device:
 
         p_idx = max(0, min(2, int(p_idx)))
         lcd_buf = self.get_lcd_settings()
-        lcd_buf[6] = 1
+        lcd_buf[6] = (p_idx + 1) & 0xFF
 
         padded_ids = (list(app_ids) + [0] * 12)[:12]
         for slot_idx, app_id in enumerate(padded_ids):
