@@ -44,10 +44,12 @@ FEATURE_REQ_CMD_SCREEN_KEYS  = 0xB9  # 584 bytes (Report ID 0x29)
 REPORT_ID_LCD_SETTINGS       = 0x25
 REPORT_ID_SCREEN_KEYS        = 0x29
 REPORT_ID_SLOT_UPDATE        = 0x35
+REPORT_ID_MISC_SETTING       = 0x0D
 
 LEN_LCD_SETTINGS             = 164
 LEN_SCREEN_KEYS              = 584
 LEN_SLOT_UPDATE              = 12
+LEN_MISC_SETTING             = 20
 
 
 GESTURES = {
@@ -265,6 +267,79 @@ class KB7Device:
 
         return True
 
+    def upload_theme(
+        self,
+        image,
+        progress_callback: Optional[Callable[[str, int], None]] = None
+    ) -> bool:
+        """
+        Uploads and activates a complete theme / wallpaper on the KB7 display.
+        Executes the official 4-step sequence:
+          1. Convert & upload full 800x480 RGB565 image to slot 0x00
+          2. Wait 5000ms for Sonix MCU SPI flash write
+          3. Convert & upload 148x142 RGB565 thumbnail to slot 0x40
+          4. Enable Custom Background Mode in Feature Report 0x0D (Byte 8 = 1)
+          5. Force LVGL canvas redraw by re-applying active page
+        """
+        from PIL import Image
+        from .image import convert_to_rgb565
+
+        if isinstance(image, str):
+            im_full = Image.open(image).convert("RGB")
+        elif isinstance(image, Image.Image):
+            im_full = image.convert("RGB")
+        else:
+            raise TypeError("image must be a PIL Image or file path.")
+
+        if im_full.size != (800, 480):
+            im_full = im_full.resize((800, 480), Image.Resampling.LANCZOS)
+
+        # 1. Full 800x480 RGB565
+        rgb565_full = convert_to_rgb565(im_full, 800, 480)
+
+        # 2. Thumbnail 148x142 RGB565
+        im_thumb = im_full.resize((148, 142), Image.Resampling.LANCZOS)
+        rgb565_thumb = convert_to_rgb565(im_thumb, 148, 142)
+
+        if progress_callback:
+            progress_callback("Uploading 800x480 wallpaper data...", 0)
+
+        def full_cb(sent, total):
+            if progress_callback:
+                pct = int((sent / total) * 70)
+                progress_callback(f"Streaming wallpaper: {pct}% ({sent // 1024} KB / {total // 1024} KB)", pct)
+
+        self.upload_image(rgb565_full, slot_id=SLOT_BACKGROUND, progress_callback=full_cb)
+
+        # Wait 5000ms for Sonix MCU to commit to SPI flash
+        if progress_callback:
+            progress_callback("Saving to hardware SPI flash (Sonix MCU)...", 75)
+        time.sleep(5.0)
+
+        # Upload thumbnail to slot 0x40
+        if progress_callback:
+            progress_callback("Uploading 148x142 thumbnail...", 85)
+
+        def thumb_cb(sent, total):
+            if progress_callback:
+                pct = 85 + int((sent / total) * 10)
+                progress_callback(f"Streaming thumbnail: {pct}%", pct)
+
+        self.upload_image(rgb565_thumb, slot_id=SLOT_SCALED_BG, progress_callback=thumb_cb)
+
+        # Activate Custom Background Mode (Report 0x0D, byte 8 = 1)
+        if progress_callback:
+            progress_callback("Activating custom theme in firmware...", 98)
+        self.set_background_mode(1)
+
+        # Refresh screen to trigger LVGL canvas redraw
+        self.refresh_screen()
+
+        if progress_callback:
+            progress_callback("Theme active and visible on KB7 display!", 100)
+
+        return True
+
     # =========================================================================
     # TOUCH EVENTS (UsagePage 0xFF02)
     # =========================================================================
@@ -393,6 +468,59 @@ class KB7Device:
         buf = bytearray(settings.raw)
         buf[6:10] = page.to_bytes(4, "little")
         return self._write_lcd_settings(buf)
+
+    def refresh_screen(self) -> bool:
+        """
+        Forces an LVGL canvas redraw by re-applying the current active page.
+        """
+        settings = self.get_lcd_settings()
+        return self.set_active_page(settings.active_page)
+
+    def set_background_mode(self, mode: int = 1) -> bool:
+        """
+        Sets the background mode in Feature Report 0x0D (20 bytes).
+        mode=0: Factory built-in wallpaper
+        mode=1: Custom user wallpaper (slot 0x00 / 0x40)
+        """
+        if not self.feat_handle:
+            raise RuntimeError("Feature interface (0xFF03) not connected.")
+
+        from .win_hid import hid_get_feature, hid_set_feature
+
+        try:
+            raw = hid_get_feature(self.feat_handle, REPORT_ID_MISC_SETTING, LEN_MISC_SETTING)
+            buf = bytearray(raw)
+        except Exception:
+            buf = bytearray(LEN_MISC_SETTING)
+
+        if len(buf) < LEN_MISC_SETTING:
+            buf.extend([0] * (LEN_MISC_SETTING - len(buf)))
+
+        buf[0] = REPORT_ID_MISC_SETTING
+        buf[1] = LEN_MISC_SETTING
+        buf[8] = mode & 0xFF
+
+        ok = hid_set_feature(self.feat_handle, bytes(buf))
+        time.sleep(0.1)
+        return bool(ok)
+
+    def get_background_mode(self) -> int:
+        """
+        Queries current background mode from Feature Report 0x0D.
+        Returns 0 for factory default, 1 for custom wallpaper.
+        """
+        if not self.feat_handle:
+            raise RuntimeError("Feature interface (0xFF03) not connected.")
+
+        from .win_hid import hid_get_feature
+
+        try:
+            raw = hid_get_feature(self.feat_handle, REPORT_ID_MISC_SETTING, LEN_MISC_SETTING)
+            if len(raw) > 8:
+                return raw[8]
+        except Exception:
+            pass
+        return 0
 
     def get_screen_keys(self) -> List[ScreenKey]:
         """

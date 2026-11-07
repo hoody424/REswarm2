@@ -438,16 +438,36 @@ class KB7CommandCenterApp:
         self.lbl_preview = tk.Label(right, bg="#080c14", bd=0, highlightthickness=2, highlightbackground=COLOR_BORDER)
         self.lbl_preview.pack(padx=20, pady=8)
 
+        # Options bar: Switch to clean page & Reset to factory
+        opt_bar = tk.Frame(right, bg=COLOR_BG_CARD)
+        opt_bar.pack(fill=tk.X, padx=20, pady=(4, 6))
+
+        self.var_switch_clean_page = tk.BooleanVar(value=True)
+        cb_clean = tk.Checkbutton(
+            opt_bar, text="Switch to clean Page 5 after upload (unobstructed)",
+            variable=self.var_switch_clean_page,
+            font=("Segoe UI", 9), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
+            selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD, activeforeground=COLOR_TEXT_MAIN
+        )
+        cb_clean.pack(side=tk.LEFT)
+
+        btn_reset_theme = tk.Button(
+            opt_bar, text="↺ Reset to Factory Wallpaper", font=("Segoe UI", 8),
+            bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MUTED, bd=0, padx=8, pady=3, cursor="hand2",
+            command=self._reset_factory_theme
+        )
+        btn_reset_theme.pack(side=tk.RIGHT)
+
         # Progress bar & Upload Button
         self.progress_bar = ttk.Progressbar(right, orient=tk.HORIZONTAL, length=480, mode="determinate")
-        self.progress_bar.pack(padx=20, pady=(12, 6))
+        self.progress_bar.pack(padx=20, pady=(6, 6))
 
         self.btn_upload = tk.Button(
             right, text="⚡ APPLY THEME TO KB7 DISPLAY", font=("Segoe UI", 11, "bold"),
             bg=COLOR_ACCENT, fg="#000000", activebackground="#00e5ff", activeforeground="#000000",
             bd=0, padx=24, pady=10, cursor="hand2", command=self._upload_selected_theme
         )
-        self.btn_upload.pack(padx=20, pady=(6, 16))
+        self.btn_upload.pack(padx=20, pady=(6, 12))
 
         self.lbl_upload_status = tk.Label(right, text="Ready to upload.", font=("Segoe UI", 9), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD)
         self.lbl_upload_status.pack(padx=20)
@@ -500,23 +520,62 @@ class KB7CommandCenterApp:
                     gen_fn = THEME_PRESETS.get(preset, THEME_PRESETS["tactical_hud"])
                     im = gen_fn()
 
-                rgb565 = convert_to_rgb565(im)
+                def progress_cb(msg: str, pct: int):
+                    self.root.after(0, lambda: self._update_upload_status(msg, pct))
 
-                self.lbl_upload_status.configure(text="Streaming to KB7 over USB HID...")
-                with KB7Device() as dev:
-                    def progress_cb(sent, total):
-                        pct = (sent * 100) // total
-                        self.root.after(0, lambda: self._update_progress(pct, sent, total))
+                # Safe upload avoiding handle conflicts with running daemon
+                if self.daemon and self.daemon.device:
+                    with self.daemon.lock:
+                        self.daemon.device.upload_theme(im, progress_callback=progress_cb)
+                        if self.var_switch_clean_page.get():
+                            self.daemon.device.set_active_page(5)
+                elif self.client and self.hw_connected:
+                    progress_cb("Sending upload command to KB7 Daemon (please wait)...", 20)
+                    preset_name = None if self.custom_image_path else self.theme_var.get()
+                    self.client.apply_theme(name=preset_name, path=self.custom_image_path)
+                    if self.var_switch_clean_page.get():
+                        self.client.set_page(5)
+                    progress_cb("Theme active and visible on KB7 display!", 100)
+                else:
+                    with KB7Device() as dev:
+                        dev.upload_theme(im, progress_callback=progress_cb)
+                        if self.var_switch_clean_page.get():
+                            dev.set_active_page(5)
 
-                    dev.upload_image(rgb565, slot_id=SLOT_BACKGROUND, progress_callback=progress_cb)
-
-                self.root.after(0, lambda: self.lbl_upload_status.configure(text="[+] Theme active on KB7 display!", fg=COLOR_ACCENT))
+                msg = "[+] Theme active on KB7 display!"
+                if self.var_switch_clean_page.get():
+                    msg += " (Switched to clean Page 5)"
+                    self.page_var.set(5)
+                self.root.after(0, lambda: self.lbl_upload_status.configure(text=msg, fg=COLOR_ACCENT))
+                self.root.after(0, self.refresh_slots_view)
             except Exception as e:
                 self.root.after(0, lambda: self.lbl_upload_status.configure(text=f"[!] Upload error: {e}", fg=COLOR_MUTE_ACTIVE))
             finally:
                 self.root.after(0, lambda: self.btn_upload.configure(state=tk.NORMAL))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _update_upload_status(self, msg: str, pct: int):
+        self.progress_bar["value"] = pct
+        self.lbl_upload_status.configure(text=msg, fg=COLOR_TEXT_MAIN)
+
+    def _reset_factory_theme(self):
+        """Resets the keyboard screen to built-in factory wallpaper."""
+        try:
+            if self.daemon and self.daemon.device:
+                with self.daemon.lock:
+                    self.daemon.device.set_background_mode(0)
+                    self.daemon.device.refresh_screen()
+            elif self.client and self.hw_connected:
+                self.client.set_background_mode(0)
+                self.client.refresh_screen()
+            else:
+                with KB7Device() as dev:
+                    dev.set_background_mode(0)
+                    dev.refresh_screen()
+            self.lbl_upload_status.configure(text="[+] Restored factory default wallpaper.", fg=COLOR_ACCENT)
+        except Exception as e:
+            self.lbl_upload_status.configure(text=f"[!] Reset error: {e}", fg=COLOR_MUTE_ACTIVE)
 
     def _update_progress(self, pct: int, sent: int, total: int):
         self.progress_bar["value"] = pct
@@ -584,10 +643,13 @@ class KB7CommandCenterApp:
         tmpl_row = tk.Frame(content, bg=COLOR_BG_CARD)
         tmpl_row.pack(fill=tk.X, padx=16, pady=4)
 
-        for tmpl_name in ["multimedia", "telemetry", "productivity", "gaming", "numpad", "obs"]:
+        for tmpl_name in ["multimedia", "telemetry", "productivity", "gaming", "numpad", "obs", "empty"]:
+            btn_text = "Clean (Empty)" if tmpl_name == "empty" else f"Apply {tmpl_name.capitalize()}"
             btn_t = tk.Button(
-                tmpl_row, text=f"Apply {tmpl_name.capitalize()}", font=("Segoe UI", 9),
-                bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=12, pady=6, cursor="hand2",
+                tmpl_row, text=btn_text, font=("Segoe UI", 9),
+                bg="#2e151b" if tmpl_name == "empty" else COLOR_BG_HOVER,
+                fg=COLOR_MUTE_ACTIVE if tmpl_name == "empty" else COLOR_TEXT_MAIN,
+                bd=0, padx=12, pady=6, cursor="hand2",
                 command=lambda t=tmpl_name: self._apply_template(t)
             )
             btn_t.pack(side=tk.LEFT, padx=(0, 8))

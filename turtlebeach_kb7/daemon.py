@@ -290,6 +290,36 @@ class KB7Daemon:
                 ok = self.device.apply_template(page - 1, tmpl_name)
                 return {"status": "ok" if ok else "error", "page": page, "template": tmpl_name}
 
+            elif cmd == "set_background_mode":
+                mode = int(req.get("mode", 1))
+                ok = self.device.set_background_mode(mode)
+                self.device.refresh_screen()
+                return {"status": "ok" if ok else "error", "mode": mode}
+
+            elif cmd == "get_background_mode":
+                mode = self.device.get_background_mode()
+                return {"status": "ok", "mode": mode}
+
+            elif cmd == "refresh_screen":
+                ok = self.device.refresh_screen()
+                return {"status": "ok" if ok else "error"}
+
+            elif cmd == "apply_theme":
+                preset = req.get("name")
+                img_path = req.get("path")
+                from .theme_generator import THEME_PRESETS
+                from PIL import Image
+
+                if img_path:
+                    im = Image.open(img_path)
+                elif preset in THEME_PRESETS:
+                    im = THEME_PRESETS[preset]()
+                else:
+                    return {"status": "error", "message": f"Unknown theme preset '{preset}'"}
+
+                ok = self.device.upload_theme(im)
+                return {"status": "ok" if ok else "error", "theme": preset or img_path}
+
             else:
                 return {"status": "error", "message": f"Unknown command: '{cmd}'"}
 

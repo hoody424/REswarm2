@@ -64,7 +64,7 @@ class KB7Client:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def _send_command(self, cmd: str, **kwargs) -> Dict[str, Any]:
+    def _send_command(self, cmd: str, timeout: float = 5.0, **kwargs) -> Dict[str, Any]:
         """Sends a synchronous command and waits for reply."""
         if not self.sock or not self.running:
             raise ConnectionError("KB7Client is not connected to daemon.")
@@ -85,8 +85,8 @@ class KB7Client:
             self._pending_responses.pop(req_id, None)
             raise ConnectionError(f"Failed to transmit to KB7 Daemon: {e}")
 
-        # Wait up to 5 seconds for response
-        if not event.wait(timeout=5.0):
+        # Wait up to timeout seconds for response
+        if not event.wait(timeout=timeout):
             self._pending_responses.pop(req_id, None)
             raise TimeoutError(f"Command '{cmd}' timed out awaiting daemon reply.")
 
@@ -193,6 +193,26 @@ class KB7Client:
     def apply_template(self, page: int, template_name: str) -> bool:
         """Applies a layout template (e.g. 'numpad', 'telemetry', 'gaming') to a page."""
         res = self._send_command("apply_template", page=page, name=template_name)
+        return res.get("status") == "ok"
+
+    def set_background_mode(self, mode: int = 1) -> bool:
+        """Sets custom background mode (1=custom wallpaper, 0=built-in default)."""
+        res = self._send_command("set_background_mode", mode=mode)
+        return res.get("status") == "ok"
+
+    def get_background_mode(self) -> int:
+        """Reads custom background mode (1=custom wallpaper, 0=built-in default)."""
+        res = self._send_command("get_background_mode")
+        return res.get("mode", 0)
+
+    def refresh_screen(self) -> bool:
+        """Forces an LVGL canvas refresh on the KB7 display."""
+        res = self._send_command("refresh_screen")
+        return res.get("status") == "ok"
+
+    def apply_theme(self, name: Optional[str] = None, path: Optional[str] = None) -> bool:
+        """Uploads and activates a theme via daemon (timeout 60s)."""
+        res = self._send_command("apply_theme", timeout=60.0, name=name, path=path)
         return res.get("status") == "ok"
 
     def on_touch(self, slot: Optional[int] = None, gesture: Optional[str] = None):

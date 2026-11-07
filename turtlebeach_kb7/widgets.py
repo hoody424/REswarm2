@@ -270,6 +270,12 @@ LAYOUT_TEMPLATES: Dict[str, List[int]] = {
         APP_OBS_STUDIO_MODE, APP_OBS_SCENE, APP_OBS_PROFILE,
         APP_OBS_SCREENSHOT, APP_NONE, APP_NONE,
         APP_NONE, APP_NONE, APP_NONE
+    ],
+    "empty": [
+        APP_NONE, APP_NONE, APP_NONE,
+        APP_NONE, APP_NONE, APP_NONE,
+        APP_NONE, APP_NONE, APP_NONE,
+        APP_NONE, APP_NONE, APP_NONE
     ]
 }
 
