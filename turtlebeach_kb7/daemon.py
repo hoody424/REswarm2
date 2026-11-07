@@ -274,8 +274,7 @@ class KB7Daemon:
                 slot = int(req.get("slot", 0))
                 app_id = int(req.get("app_id", 0))
                 w_def = lookup_widget(app_id)
-                w_type = 2 if w_def.runtime_update else 3
-                ok = self.device.update_widget_slot(page - 1, slot, w_type, app_id, is_last=True)
+                ok = self.device.assign_widget(page - 1, slot, app_id)
                 return {
                     "status": "ok" if ok else "error",
                     "page": page,

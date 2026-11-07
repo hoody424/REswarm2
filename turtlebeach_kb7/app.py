@@ -643,16 +643,23 @@ class KB7CommandCenterApp:
         tmpl_row = tk.Frame(content, bg=COLOR_BG_CARD)
         tmpl_row.pack(fill=tk.X, padx=16, pady=4)
 
-        for tmpl_name in ["multimedia", "telemetry", "productivity", "gaming", "numpad", "obs", "empty"]:
-            btn_text = "Clean (Empty)" if tmpl_name == "empty" else f"Apply {tmpl_name.capitalize()}"
+        templates = [
+            ("dashboard", "⚡ Power Dashboard", COLOR_ACCENT, "#000000"),
+            ("factory", "↺ Werkseinstellung", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
+            ("telemetry", "📊 Telemetrie", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
+            ("productivity", "💼 Productivity", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
+            ("multimedia", "🎵 Media Controls", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
+            ("gaming", "🎮 Gaming & Discord", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
+            ("obs", "🎥 OBS Studio", COLOR_BG_HOVER, COLOR_TEXT_MAIN),
+            ("empty", "🧹 Clean (Leere Kacheln)", "#2e151b", COLOR_MUTE_ACTIVE),
+        ]
+        for tmpl_name, label, bg_col, fg_col in templates:
             btn_t = tk.Button(
-                tmpl_row, text=btn_text, font=("Segoe UI", 9),
-                bg="#2e151b" if tmpl_name == "empty" else COLOR_BG_HOVER,
-                fg=COLOR_MUTE_ACTIVE if tmpl_name == "empty" else COLOR_TEXT_MAIN,
-                bd=0, padx=12, pady=6, cursor="hand2",
+                tmpl_row, text=label, font=("Segoe UI", 9, "bold" if tmpl_name == "dashboard" else "normal"),
+                bg=bg_col, fg=fg_col, bd=0, padx=10, pady=6, cursor="hand2",
                 command=lambda t=tmpl_name: self._apply_template(t)
             )
-            btn_t.pack(side=tk.LEFT, padx=(0, 8))
+            btn_t.pack(side=tk.LEFT, padx=(0, 6))
 
         # Current Page Slots List
         lbl_cur = tk.Label(content, text="CONFIGURED SLOTS ON PAGE:", font=("Segoe UI", 10, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD)
@@ -671,8 +678,76 @@ class KB7CommandCenterApp:
         self.tree_slots.column("name", width=260)
         self.tree_slots.column("cat", width=160)
 
-        self.tree_slots.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
+        self.tree_slots.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+
+        # Slot Customizer Control Bar
+        edit_bar = tk.Frame(content, bg=COLOR_BG_CARD)
+        edit_bar.pack(fill=tk.X, padx=16, pady=(0, 16))
+
+        tk.Label(edit_bar, text="KACHEL ANPASSEN:", font=("Segoe UI", 9, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.cb_slot_idx = ttk.Combobox(edit_bar, values=[f"Slot {i}" for i in range(7)], state="readonly", width=8)
+        self.cb_slot_idx.current(0)
+        self.cb_slot_idx.pack(side=tk.LEFT, padx=4)
+
+        # Build widget choices
+        widget_choices = []
+        self._widget_id_map = {}
+        for app_id, w in sorted(WIDGET_CATALOG.items(), key=lambda x: (x[1].category, x[1].name)):
+            lbl = f"[{w.category}] {w.name}"
+            widget_choices.append(lbl)
+            self._widget_id_map[lbl] = app_id
+
+        self.cb_widget_select = ttk.Combobox(edit_bar, values=widget_choices, state="readonly", width=38)
+        if widget_choices:
+            self.cb_widget_select.current(0)
+        self.cb_widget_select.pack(side=tk.LEFT, padx=8)
+
+        btn_assign = tk.Button(
+            edit_bar, text="Kachel zuweisen", font=("Segoe UI", 9, "bold"),
+            bg=COLOR_ACCENT, fg="#000000", bd=0, padx=14, pady=4, cursor="hand2",
+            command=self._on_assign_widget_clicked
+        )
+        btn_assign.pack(side=tk.LEFT, padx=4)
+
+        def _on_tree_select(event):
+            selected = self.tree_slots.selection()
+            if selected:
+                vals = self.tree_slots.item(selected[0], "values")
+                if vals:
+                    slot_str = vals[0]  # "Slot 3"
+                    try:
+                        idx = int(slot_str.split()[1])
+                        if 0 <= idx < 7:
+                            self.cb_slot_idx.current(idx)
+                    except Exception:
+                        pass
+        self.tree_slots.bind("<<TreeviewSelect>>", _on_tree_select)
+
         self.refresh_slots_view()
+
+    def _on_assign_widget_clicked(self):
+        p = self.page_var.get()
+        slot_str = self.cb_slot_idx.get()
+        slot_idx = int(slot_str.split()[1])
+        selected_label = self.cb_widget_select.get()
+        app_id = self._widget_id_map.get(selected_label, 0)
+
+        try:
+            if self.daemon and self.daemon.device:
+                with self.daemon.lock:
+                    self.daemon.device.assign_widget(p - 1, slot_idx, app_id)
+            elif self.client and self.hw_connected:
+                self.client.assign_widget(page=p, slot=slot_idx, app_id=app_id)
+            else:
+                with KB7Device() as dev:
+                    dev.assign_widget(p - 1, slot_idx, app_id)
+
+            time.sleep(0.05)
+            self.refresh_slots_view()
+            messagebox.showinfo("Success", f"Widget '{selected_label}' assigned to Page {p}, Slot {slot_idx}!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to assign widget: {e}")
 
     def _on_page_changed(self):
         p = self.page_var.get()
@@ -685,14 +760,21 @@ class KB7CommandCenterApp:
 
     def _apply_template(self, tmpl_name: str):
         p = self.page_var.get()
-        if self.client and self.hw_connected:
-            try:
+        try:
+            if self.daemon and self.daemon.device:
+                with self.daemon.lock:
+                    self.daemon.device.apply_template(p - 1, tmpl_name)
+            elif self.client and self.hw_connected:
                 self.client.apply_template(page=p, template_name=tmpl_name)
-                time.sleep(0.1)
-                self.refresh_slots_view()
-                messagebox.showinfo("Success", f"Applied template '{tmpl_name}' to Page {p}!")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to apply template: {e}")
+            else:
+                with KB7Device() as dev:
+                    dev.apply_template(p - 1, tmpl_name)
+
+            time.sleep(0.1)
+            self.refresh_slots_view()
+            messagebox.showinfo("Success", f"Applied template '{tmpl_name}' to Page {p}!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply template: {e}")
 
     def refresh_slots_view(self):
         for item in self.tree_slots.get_children():

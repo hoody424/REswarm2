@@ -599,10 +599,31 @@ class KB7Device:
 
         return hid_set_feature(self.feat_handle, bytes(pkt))
 
+    def assign_widget(self, page_idx: int, slot_idx: int, app_id: int) -> bool:
+        """
+        Assigns a widget to an individual slot (0 to 6) on the specified page (0 to 4).
+        """
+        from .widgets import lookup_widget
+        settings = self.get_lcd_settings()
+        buf = bytearray(settings.raw)
+
+        slot = max(0, min(6, slot_idx))
+        page = max(0, min(4, page_idx))
+        off = 22 + page * 28 + slot * 4
+
+        widget_def = lookup_widget(app_id)
+        w_type = 2 if widget_def.runtime_update else (3 if app_id != 0 else 0)
+
+        buf[off : off + 2] = (w_type & 0xFFFF).to_bytes(2, "little")
+        buf[off + 2 : off + 4] = (app_id & 0xFFFF).to_bytes(2, "little")
+
+        ok = self._write_lcd_settings(buf)
+        self.set_active_page(page + 1)
+        return ok
+
     def apply_template(self, page_idx: int, template_name: str) -> bool:
         """
-        Applies a predefined layout template (e.g. 'numpad', 'telemetry', 'productivity')
-        to the specified display page (0 to 4).
+        Applies a predefined 7-slot layout template to the specified display page (0 to 4).
         """
         from .widgets import LAYOUT_TEMPLATES, lookup_widget
 
@@ -610,20 +631,18 @@ class KB7Device:
         if not template:
             raise ValueError(f"Unknown template '{template_name}'. Available: {list(LAYOUT_TEMPLATES.keys())}")
 
-        total = len(template)
-        for idx, app_id in enumerate(template):
-            is_last = (idx == total - 1)
-            # Default widget type: Type 3 for buttons/keys, Type 2 for telemetry
-            widget_def = lookup_widget(app_id)
-            w_type = 2 if widget_def.runtime_update else 3
-            self.update_widget_slot(
-                page_idx=page_idx,
-                slot_idx=idx,
-                widget_type=w_type,
-                widget_id=app_id,
-                is_last=is_last
-            )
-            # 100 ms delay matching the official firmware communication timing
-            time.sleep(0.1)
+        settings = self.get_lcd_settings()
+        buf = bytearray(settings.raw)
 
-        return True
+        base_off = 22 + page_idx * 28
+        for idx in range(7):
+            app_id = template[idx] if idx < len(template) else 0
+            widget_def = lookup_widget(app_id)
+            w_type = 2 if widget_def.runtime_update else (3 if app_id != 0 else 0)
+            off = base_off + idx * 4
+            buf[off : off + 2] = (w_type & 0xFFFF).to_bytes(2, "little")
+            buf[off + 2 : off + 4] = (app_id & 0xFFFF).to_bytes(2, "little")
+
+        ok = self._write_lcd_settings(buf)
+        self.set_active_page(page_idx + 1)
+        return ok
