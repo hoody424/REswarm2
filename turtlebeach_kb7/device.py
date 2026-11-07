@@ -615,7 +615,16 @@ class KB7Device:
         )
         time.sleep(5.0)
         self.upload_raw_buffer(thumb_buf, slot_id=0x40, progress_callback=_cb_thumb)
+
+        # Force Sonix MCU to invalidate cache and reload new wallpaper from SPI flash into LVGL canvas
+        self.set_background_mode(0)
+        time.sleep(0.15)
         self.set_background_mode(1)
+        time.sleep(0.15)
+        self.set_active_page(2)
+        time.sleep(0.2)
+        self.set_active_page(1)
+
         self._invoke_progress(
             progress_callback,
             "Theme active on KB7 display!",
