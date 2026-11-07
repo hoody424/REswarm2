@@ -92,16 +92,10 @@ class KB7CommandCenterApp:
         self.client: Optional[KB7Client] = None
         self.hw_connected = False
         self.running = True
-        self.active_tab = "mixer"
-        self._ensure_hardware_service()
+        self.active_tab = "streamdeck"
 
         # SteelSeries Mouse RGB Synchronization
-        self.steelseries: Optional[SteelSeriesSync] = None
-        try:
-            self.steelseries = SteelSeriesSync()
-            self.steelseries.start()
-        except Exception as e:
-            print(f"[!] SteelSeries init warning: {e}")
+        self.steelseries: Optional[SteelSeriesSync] = SteelSeriesSync()
 
         # Theme & Wallpaper State
         self.selected_theme_name = "tactical_hud"
@@ -119,19 +113,34 @@ class KB7CommandCenterApp:
             steelseries=self.steelseries,
         )
 
-        # Build Navigation & Main Views
+        # Build Navigation & Main Views immediately so the window opens in < 0.1s
         self._build_header()
         self._build_tabs()
+        self.root.update_idletasks()
+        self.root.deiconify()
+        self.root.lift()
 
-        # Start Lighting Engine
-        self.lighting.start()
-
-        # Initial Audio & Display Refresh (Non-blocking background thread)
-        self.refresh_audio_state()
-        self.refresh_display_settings()
-
-        # Start non-blocking background workers
+        # Non-blocking background initialization of hardware daemon, SteelSeries, lighting & audio
+        threading.Thread(target=self._async_init_services, daemon=True).start()
         self._start_background_workers()
+
+    def _async_init_services(self):
+        """Initializes USB HID daemon, SteelSeries GameSense, lighting & audio without blocking the GUI."""
+        self._ensure_hardware_service()
+        if self.hw_connected:
+            self.root.after(0, lambda: self.lbl_hw_status.configure(text="● HARDWARE CONNECTED", fg=COLOR_ACCENT))
+        if self.steelseries:
+            try:
+                self.steelseries.start()
+                if self.steelseries.connected and hasattr(self, "lbl_ss_status"):
+                    self.root.after(0, lambda: self.lbl_ss_status.configure(text="● SteelSeries Aerox 3 verbunden", fg="#00e575"))
+            except Exception as e:
+                print(f"[!] SteelSeries init warning: {e}")
+
+        self.lighting.start()
+        self.refresh_audio_state()
+        self.root.after(200, self.refresh_display_settings)
+        self.root.after(400, self.refresh_slots_view)
 
     def _ensure_hardware_service(self):
         """Connects to daemon or starts in-process single-writer service."""
@@ -1816,8 +1825,6 @@ class KB7CommandCenterApp:
                     except Exception:
                         pass
         self.tree_slots.bind("<<TreeviewSelect>>", _on_tree_select)
-
-        self.refresh_slots_view()
 
     def _on_assign_widget_clicked(self):
         p = self.page_var.get()

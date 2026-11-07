@@ -247,6 +247,7 @@ class LightingEngine:
         self._phase: float = 0.0
         self._ui_preview_callback: Optional[Callable] = None
         self._audio_level: float = 0.25
+        self._last_mouse_sent: Tuple[int, int, int] = (-1, -1, -1)
 
         self.load_config()
 
@@ -298,7 +299,6 @@ class LightingEngine:
         self._running = True
         self._anim_thread = threading.Thread(target=self._animation_loop, daemon=True)
         self._anim_thread.start()
-        self.apply_now()
 
     def stop(self) -> None:
         self._running = False
@@ -473,27 +473,30 @@ class LightingEngine:
                 mr = int(mouse_rgb[0] * scale)
                 mg = int(mouse_rgb[1] * scale)
                 mb = int(mouse_rgb[2] * scale)
-                self.steelseries.set_color(mr, mg, mb)
+                prev_r, prev_g, prev_b = self._last_mouse_sent
+                if abs(mr - prev_r) + abs(mg - prev_g) + abs(mb - prev_b) >= 6:
+                    self._last_mouse_sent = (mr, mg, mb)
+                    self.steelseries.set_color(mr, mg, mb)
             except Exception:
                 pass
 
         return ok
 
     def _animation_loop(self) -> None:
-        """Background thread that animates dynamic software-synced effects smoothly."""
+        """Background thread that animates dynamic software-synced effects without saturating USB HID."""
+        time.sleep(0.6)
+        self.apply_now()
         while self._running:
             meta = LIGHTING_EFFECTS.get(self.effect_id, {})
             if meta.get("dynamic", False):
-                # Speed 1..11 maps to step size
-                step = 0.015 + (self.speed / 11.0) * 0.075
+                step = 0.025 + (self.speed / 11.0) * 0.085
                 self._phase = (self._phase + step) % 1.0
 
                 if self.effect_id == "audio_vu":
-                    # Add lively rhythm modulation around current audio level
                     beat = 0.25 + 0.70 * abs(math.sin(time.time() * (2.2 + self.speed * 0.35)))
                     self._audio_level = beat
 
                 self.apply_now()
-                time.sleep(0.14)
+                time.sleep(0.42)
             else:
-                time.sleep(0.35)
+                time.sleep(0.50)
