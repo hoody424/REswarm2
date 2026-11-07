@@ -756,9 +756,21 @@ class KB7CommandCenterApp:
 
     def _on_page_changed(self):
         p = self.page_var.get()
-        if self.client and self.hw_connected:
+        if self.daemon and self.daemon.device:
+            try:
+                with self.daemon.lock:
+                    self.daemon.device.set_active_page(p)
+            except Exception:
+                pass
+        elif self.client and self.hw_connected:
             try:
                 self.client.set_page(p)
+            except Exception:
+                pass
+        else:
+            try:
+                with KB7Device() as dev:
+                    dev.set_active_page(p)
             except Exception:
                 pass
         self.refresh_slots_view()
@@ -775,9 +787,9 @@ class KB7CommandCenterApp:
                 with KB7Device() as dev:
                     dev.apply_template(p - 1, tmpl_name)
 
-            time.sleep(0.1)
+            time.sleep(0.05)
             self.refresh_slots_view()
-            messagebox.showinfo("Success", f"Applied template '{tmpl_name}' to Page {p}!")
+            messagebox.showinfo("Success", f"Layout '{tmpl_name}' erfolgreich auf Seite {p} angewendet!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to apply template: {e}")
 
@@ -786,15 +798,53 @@ class KB7CommandCenterApp:
             self.tree_slots.delete(item)
 
         p = self.page_var.get()
-        if self.client and self.hw_connected:
+        slots = None
+
+        if self.daemon and self.daemon.device:
+            try:
+                with self.daemon.lock:
+                    settings = self.daemon.device.get_lcd_settings()
+                    slots = []
+                    for i, (w_type, w_id) in enumerate(settings.widget_slots):
+                        p_num = (i // 7) + 1
+                        s_idx = i % 7
+                        if p_num != p:
+                            continue
+                        w_def = lookup_widget(w_id)
+                        slots.append({
+                            "slot": s_idx, "type": w_type, "app_id": w_id,
+                            "name": w_def.name, "category": w_def.category
+                        })
+            except Exception as e:
+                print(f"[!] Error reading slots: {e}")
+        elif self.client and self.hw_connected:
             try:
                 slots = self.client.get_slots(page=p)
-                for s in slots:
-                    self.tree_slots.insert("", tk.END, values=(
-                        f"Slot {s['slot']}", s["type"], s["app_id"], s["name"], s["category"]
-                    ))
             except Exception:
                 pass
+        else:
+            try:
+                with KB7Device() as dev:
+                    settings = dev.get_lcd_settings()
+                    slots = []
+                    for i, (w_type, w_id) in enumerate(settings.widget_slots):
+                        p_num = (i // 7) + 1
+                        s_idx = i % 7
+                        if p_num != p:
+                            continue
+                        w_def = lookup_widget(w_id)
+                        slots.append({
+                            "slot": s_idx, "type": w_type, "app_id": w_id,
+                            "name": w_def.name, "category": w_def.category
+                        })
+            except Exception:
+                pass
+
+        if slots:
+            for s in slots:
+                self.tree_slots.insert("", tk.END, values=(
+                    f"Slot {s['slot']}", s["type"], s["app_id"], s["name"], s["category"]
+                ))
 
     # =========================================================================
     # TAB 4: HARDWARE & TOUCH LOGS

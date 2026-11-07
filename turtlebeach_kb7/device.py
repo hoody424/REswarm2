@@ -616,14 +616,19 @@ class KB7Device:
 
         buf[off : off + 2] = (w_type & 0xFFFF).to_bytes(2, "little")
         buf[off + 2 : off + 4] = (app_id & 0xFFFF).to_bytes(2, "little")
+        buf[6:10] = (page + 1).to_bytes(4, "little")
 
         ok = self._write_lcd_settings(buf)
-        self.set_active_page(page + 1)
+        time.sleep(0.02)
+        # Send Report 0x35 to notify LVGL to redraw this slot immediately
+        self.update_widget_slot(page, slot, w_type, app_id, is_last=True)
         return ok
 
     def apply_template(self, page_idx: int, template_name: str) -> bool:
         """
         Applies a predefined 7-slot layout template to the specified display page (0 to 4).
+        Uses atomic Report 0x25 persistent storage write combined with 7x Report 0x35
+        cascade to force an instantaneous LVGL runtime canvas redraw.
         """
         from .widgets import LAYOUT_TEMPLATES, lookup_widget
 
@@ -634,7 +639,8 @@ class KB7Device:
         settings = self.get_lcd_settings()
         buf = bytearray(settings.raw)
 
-        base_off = 22 + page_idx * 28
+        page = max(0, min(4, page_idx))
+        base_off = 22 + page * 28
         for idx in range(7):
             app_id = template[idx] if idx < len(template) else 0
             widget_def = lookup_widget(app_id)
@@ -643,6 +649,18 @@ class KB7Device:
             buf[off : off + 2] = (w_type & 0xFFFF).to_bytes(2, "little")
             buf[off + 2 : off + 4] = (app_id & 0xFFFF).to_bytes(2, "little")
 
+        # Set active page directly in buf
+        buf[6:10] = (page + 1).to_bytes(4, "little")
+
         ok = self._write_lcd_settings(buf)
-        self.set_active_page(page_idx + 1)
+        time.sleep(0.02)
+
+        # Send 7x Report 0x35 sequence matching official Swarm II firmware protocol
+        for idx in range(7):
+            app_id = template[idx] if idx < len(template) else 0
+            widget_def = lookup_widget(app_id)
+            w_type = 2 if widget_def.runtime_update else (3 if app_id != 0 else 0)
+            self.update_widget_slot(page, idx, w_type, app_id, is_last=(idx == 6))
+            time.sleep(0.01)
+
         return ok
