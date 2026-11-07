@@ -71,6 +71,8 @@ class KB7CommandCenterApp:
         self.daemon: Optional[KB7Daemon] = None
         self.client: Optional[KB7Client] = None
         self.hw_connected = False
+        self.running = True
+        self.active_tab = "mixer"
         self._ensure_hardware_service()
 
         # Theme & Wallpaper State
@@ -82,12 +84,12 @@ class KB7CommandCenterApp:
         self._build_header()
         self._build_tabs()
 
-        # Initial Audio & Display Refresh
+        # Initial Audio & Display Refresh (Non-blocking background thread)
         self.refresh_audio_state()
         self.refresh_display_settings()
 
-        # Start background polling
-        self.root.after(500, self._poll_updates)
+        # Start non-blocking background workers
+        self._start_background_workers()
 
     def _ensure_hardware_service(self):
         """Connects to daemon or starts in-process single-writer service."""
@@ -189,6 +191,7 @@ class KB7CommandCenterApp:
 
     def switch_tab(self, active_key: str):
         """Switches active view."""
+        self.active_tab = active_key
         for key, frame in self.tab_frames.items():
             if key == active_key:
                 frame.pack(fill=tk.BOTH, expand=True)
@@ -196,6 +199,11 @@ class KB7CommandCenterApp:
             else:
                 frame.pack_forget()
                 self.tab_buttons[key].configure(bg=COLOR_BG_CARD, fg=COLOR_TEXT_MUTED)
+
+        if active_key == "mixer":
+            self.refresh_audio_state()
+        elif active_key == "widgets":
+            self.refresh_slots_view()
 
     # =========================================================================
     # TAB 1: AUDIO MIXER
@@ -254,11 +262,25 @@ class KB7CommandCenterApp:
         self.sb_mixer.pack(fill=tk.X, side=tk.BOTTOM)
 
     def refresh_audio_state(self):
-        try:
-            self.active_device = self.mixer.get_default_device()
-            self.app_groups = self.mixer.get_grouped_apps()
-        except Exception:
-            return
+        """Dispatches an asynchronous audio state fetch to avoid blocking the GUI thread."""
+        def fetch():
+            try:
+                import comtypes
+                comtypes.CoInitialize()
+            except Exception:
+                pass
+            try:
+                dev = self.mixer.get_default_device()
+                apps = self.mixer.get_grouped_apps()
+                self.root.after(0, lambda d=dev, a=apps: self._apply_audio_state(d, a))
+            except Exception:
+                pass
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _apply_audio_state(self, dev, apps):
+        """Applies audio updates in the Tkinter main thread in < 1ms."""
+        self.active_device = dev
+        self.app_groups = apps or []
 
         if self.active_device:
             self.lbl_master_dev.configure(text=self.active_device.name)
@@ -878,11 +900,41 @@ class KB7CommandCenterApp:
         self.txt_log.insert(tk.END, text + "\n")
         self.txt_log.see(tk.END)
 
-    def _poll_updates(self):
-        self.refresh_audio_state()
-        self.root.after(500, self._poll_updates)
+    def _start_background_workers(self):
+        """Dedicated background thread for WASAPI COM audio polling, preventing GUI freezes."""
+        def audio_poller():
+            try:
+                import comtypes
+                comtypes.CoInitialize()
+            except Exception:
+                pass
+
+            last_vol = -1
+            last_mute = None
+            last_apps_sig = None
+
+            while self.running:
+                if self.active_tab == "mixer":
+                    try:
+                        dev = self.mixer.get_default_device()
+                        apps = self.mixer.get_grouped_apps()
+                        v = dev.volume if dev else -1
+                        m = dev.muted if dev else None
+                        sig = tuple((a.name, a.volume, a.muted) for a in apps)
+
+                        if v != last_vol or m != last_mute or sig != last_apps_sig:
+                            last_vol, last_mute, last_apps_sig = v, m, sig
+                            self.root.after(0, lambda d=dev, a=apps: self._apply_audio_state(d, a))
+                    except Exception:
+                        pass
+                    time.sleep(1.2)
+                else:
+                    time.sleep(2.0)
+
+        threading.Thread(target=audio_poller, daemon=True).start()
 
     def on_close(self):
+        self.running = False
         if self.client:
             try:
                 self.client.close()
