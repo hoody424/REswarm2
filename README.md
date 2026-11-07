@@ -71,6 +71,22 @@ sequenceDiagram
 
 ## 🚀 Quick Start & Usage
 
+### 0. Standalone Windows Desktop App (.EXE)
+Launch the unified desktop application with a single double-click (no terminal needed):
+```bash
+# Run standalone executable
+dist\KB7_Command_Center.exe
+```
+Features included in the executable:
+* 🔊 **Universal Windows Sound Mixer:** Full per-app volume sliders, multi-device routing (SteelSeries Sonar, Voicemeeter, Headset), and KB7 rotary dial synchronization.
+* 🎨 **Display Theme Manager:** 800×480 live preview with 1-click theme upload (`tactical_hud`, `audiophile_dark`, `neon_cyberpunk`, or custom images).
+* 🧩 **Widget & Slot Configurator:** 1-click layout templates (`multimedia`, `telemetry`, `productivity`, `gaming`) across display pages 1 to 5.
+* ⚡ **Hardware & Touch Monitor:** Real-time touch digitizer event stream log.
+
+To rebuild the executable at any time, simply run `build_exe.bat`.
+
+---
+
 ### 1. Inspect Connected Endpoints
 ```bash
 python -m turtlebeach_kb7.cli info
