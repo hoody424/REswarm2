@@ -643,6 +643,25 @@ class KB7Device:
     # Display Configuration (Report 0x0D, 20 bytes)
     # ------------------------------------------------------------------
 
+    def upload_mini_stream_frame(
+        self,
+        image_source,
+        progress_callback: Optional[Callable] = None,
+    ) -> bool:
+        """
+        Stream a fast `142x148` thumbnail/widget frame (63,048 bytes, ~0.9s transfer)
+        directly to Slot `0x40` for slideshow / mini-preview streaming.
+        """
+        thumb_buf = convert_to_rgb565(
+            image_source,
+            width=THUMB_WIDTH,
+            height=THUMB_HEIGHT,
+            include_alpha=True,
+        )
+        self.upload_raw_buffer(thumb_buf, slot_id=0x40, progress_callback=progress_callback)
+        self.refresh_screen()
+        return True
+
     def get_display_config(self) -> bytearray:
         """
         Read the 20-byte Display Config (`Report ID 0x0D`, `device + 0x2358` in `COMMAND_KB7.dll`).

@@ -39,6 +39,9 @@ from .streamdeck import (
     SmartStreamDeckManager,
     STREAMDECK_ACTIONS,
     STREAMDECK_PROFILES,
+    DetectedStreamWindow,
+    scan_stream_windows,
+    focus_window_by_hwnd,
     capture_screen_snapshot_for_kb7,
 )
 
@@ -237,7 +240,7 @@ class KB7CommandCenterApp:
         self._build_widgets_tab(self.tab_frames["widgets"])
         self._build_hardware_tab(self.tab_frames["hardware"])
 
-        self.switch_tab("lighting")
+        self.switch_tab("streamdeck")
 
     def switch_tab(self, active_key: str):
         """Switches active view."""
@@ -763,15 +766,15 @@ class KB7CommandCenterApp:
     def _build_streamdeck_tab(self, parent: tk.Frame):
         # Top Control & Profile Bar
         top_bar = tk.Frame(parent, bg=COLOR_BG_CARD, bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
-        top_bar.pack(fill=tk.X, pady=(2, 6))
+        top_bar.pack(fill=tk.X, pady=(2, 4))
 
         row1 = tk.Frame(top_bar, bg=COLOR_BG_CARD)
-        row1.pack(fill=tk.X, padx=14, pady=(10, 4))
+        row1.pack(fill=tk.X, padx=14, pady=(8, 3))
 
         tk.Label(row1, text="DECK-PROFILE (12× 1x1 KLEINE KACHELN):", font=("Segoe UI", 9, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 8))
 
         deck_profiles = [
-            ("stream_media", "🎬 Stream & Media"),
+            ("stream_media", "🎬 Stream & Companion"),
             ("obs_creator", "🎥 OBS & Creator"),
             ("gaming_discord", "🎮 Gaming & Discord"),
             ("mini_telemetry", "📊 12× Mini-Telemetrie"),
@@ -786,21 +789,69 @@ class KB7CommandCenterApp:
 
         btn_sync_hw = tk.Button(
             row1, text="⚡ AUF KB7 SEITE 3 FLASHEN & AKTIVIEREN", font=("Segoe UI", 9, "bold"),
-            bg="#00e575", fg="#000000", activebackground="#00ff88", bd=0, padx=14, pady=5, cursor="hand2",
+            bg="#00e575", fg="#000000", activebackground="#00ff88", bd=0, padx=14, pady=4, cursor="hand2",
             command=self._sync_streamdeck_to_kb7
         )
         btn_sync_hw.pack(side=tk.RIGHT, padx=(6, 0))
 
+        # Row 2: Live Stream Companion & Display-Streaming Bar (Twitch/YouTube/OBS Detector + Auto-Snapshot / Mini-Tile Stream)
+        row_stream = tk.Frame(top_bar, bg="#10151f", bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
+        row_stream.pack(fill=tk.X, padx=14, pady=3)
+
+        tk.Label(row_stream, text="📺 STREAM COMPANION:", font=("Segoe UI", 8, "bold"), fg="#a020f0", bg="#10151f").pack(side=tk.LEFT, padx=(8, 4), pady=5)
+
+        self.lbl_detected_stream = tk.Label(
+            row_stream, text="● Suche aktiven Stream (Twitch / YouTube / OBS / Browser)...",
+            font=("Segoe UI", 8, "bold"), fg="#00e5ff", bg="#10151f"
+        )
+        self.lbl_detected_stream.pack(side=tk.LEFT, padx=4)
+
+        btn_focus_strm = tk.Button(
+            row_stream, text="🎯 Zum Stream wechseln", font=("Segoe UI", 8, "bold"),
+            bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=8, pady=3, cursor="hand2",
+            command=self._focus_detected_stream
+        )
+        btn_focus_strm.pack(side=tk.LEFT, padx=4)
+
+        # Auto-Stream / Diashow Toggle + Mode + Manual Snapshot
+        self._auto_stream_running = False
+        self.btn_auto_stream = tk.Button(
+            row_stream, text="🔄 Auto-Stream / Diashow: AUS", font=("Segoe UI", 8, "bold"),
+            bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=10, pady=3, cursor="hand2",
+            command=self._toggle_auto_stream_loop
+        )
+        self.btn_auto_stream.pack(side=tk.RIGHT, padx=6, pady=3)
+
+        self.var_stream_mode = tk.StringVar(value=self.streamdeck.auto_stream_mode)
+        cb_strm_mode = ttk.Combobox(
+            row_stream,
+            values=["mini (142×148 Schnell ~1s)", "full (480×800 Vollbild alle 10s)"],
+            state="readonly", width=26
+        )
+        cb_strm_mode.current(0 if self.streamdeck.auto_stream_mode == "mini" else 1)
+        cb_strm_mode.pack(side=tk.RIGHT, padx=4)
+        cb_strm_mode.bind(
+            "<<ComboboxSelected>>",
+            lambda e: setattr(self.streamdeck, "auto_stream_mode", "mini" if cb_strm_mode.get().startswith("mini") else "full")
+        )
+
+        btn_mini_snap = tk.Button(
+            row_stream, text="🎞️ Mini-Frame (142×148)", font=("Segoe UI", 8, "bold"),
+            bg="#a020f0", fg="#ffffff", bd=0, padx=8, pady=3, cursor="hand2",
+            command=self._push_mini_stream_frame_to_kb7
+        )
+        btn_mini_snap.pack(side=tk.RIGHT, padx=3)
+
         btn_snap = tk.Button(
-            row1, text="📸 Live-Snapshot -> KB7", font=("Segoe UI", 8, "bold"),
-            bg=COLOR_ACCENT, fg="#000000", bd=0, padx=10, pady=5, cursor="hand2",
+            row_stream, text="📸 Vollbild-Snapshot -> KB7", font=("Segoe UI", 8, "bold"),
+            bg=COLOR_ACCENT, fg="#000000", bd=0, padx=8, pady=3, cursor="hand2",
             command=self._push_live_snapshot_to_kb7
         )
-        btn_snap.pack(side=tk.RIGHT, padx=4)
+        btn_snap.pack(side=tk.RIGHT, padx=3)
 
-        # Row 2: Tile Size Controls (UI & Hardware) + Touch Bridge Toggle
+        # Row 3: Tile Size Controls (UI & Hardware) + Touch Bridge Toggle
         row2 = tk.Frame(top_bar, bg=COLOR_BG_CARD)
-        row2.pack(fill=tk.X, padx=14, pady=(2, 8))
+        row2.pack(fill=tk.X, padx=14, pady=(2, 6))
 
         tk.Label(row2, text="UI-KACHELGRÖẞE:", font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MUTED, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 6))
 
@@ -1056,9 +1107,87 @@ class KB7CommandCenterApp:
             mixer=self.mixer,
             steelseries=self.steelseries,
             snapshot_callback=self._push_live_snapshot_to_kb7,
+            toggle_auto_stream_callback=self._toggle_auto_stream_loop,
         )
         prefix = "[KB7 Touch]" if from_hw else "[Stream Deck]"
         self.lbl_sd_status.configure(text=f"{prefix} {msg}", fg="#00e575")
+
+    def _focus_detected_stream(self):
+        wins = scan_stream_windows()
+        if wins:
+            focus_window_by_hwnd(wins[0].hwnd)
+            self.lbl_sd_status.configure(
+                text=f"🎯 Fokus gewechselt zu: [{wins[0].platform}] {wins[0].clean_title}",
+                fg="#00e575"
+            )
+        else:
+            self.lbl_sd_status.configure(
+                text="ℹ Kein aktives Twitch / YouTube / OBS / Browser-Fenster gefunden.",
+                fg=COLOR_ACCENT_ALT
+            )
+
+    def _push_mini_stream_frame_to_kb7(self):
+        """Streams a fast 142x148 Mini-Tile frame (Slot 0x40, ~0.9s) to the KB7 display."""
+        def worker():
+            self.root.after(0, lambda: self.lbl_sd_status.configure(text="🎞️ Sende schnelles 142×148 Mini-Frame (Slot 0x40)...", fg="#a020f0"))
+            try:
+                snap_im = capture_screen_snapshot_for_kb7("MINI STREAM")
+                if self.daemon and self.daemon.device:
+                    with self.daemon.lock:
+                        self.daemon.device.upload_mini_stream_frame(snap_im)
+                else:
+                    with KB7Device() as dev:
+                        dev.upload_mini_stream_frame(snap_im)
+                self.root.after(0, lambda: self.lbl_sd_status.configure(
+                    text="✓ Schnelles 142×148 Mini-Stream-Frame auf KB7 (Slot 0x40) aktualisiert!", fg="#00e575"
+                ))
+            except Exception as e:
+                self.root.after(0, lambda: self.lbl_sd_status.configure(text=f"[!] Mini-Stream Fehler: {e}", fg=COLOR_MUTE_ACTIVE))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _toggle_auto_stream_loop(self):
+        """Toggles the automatic Snapshot / Mini-Tile Slideshow Stream to the KB7 display."""
+        self._auto_stream_running = not getattr(self, "_auto_stream_running", False)
+        if self._auto_stream_running:
+            self.btn_auto_stream.configure(text="🔄 Auto-Stream / Diashow: AKTIV ●", bg="#00e575", fg="#000000")
+            self.lbl_sd_status.configure(text="🔄 Auto-Stream aufs KB7 Display gestartet!", fg="#00e575")
+            threading.Thread(target=self._run_auto_stream_worker, daemon=True).start()
+        else:
+            self.btn_auto_stream.configure(text="🔄 Auto-Stream / Diashow: AUS", bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN)
+            self.lbl_sd_status.configure(text="⏹ Auto-Stream gestoppt.", fg=COLOR_TEXT_MUTED)
+
+    def _run_auto_stream_worker(self):
+        while self.running and getattr(self, "_auto_stream_running", False):
+            try:
+                snap_im = capture_screen_snapshot_for_kb7("AUTO STREAM")
+                if self.streamdeck.auto_stream_mode == "mini":
+                    if self.daemon and self.daemon.device:
+                        with self.daemon.lock:
+                            self.daemon.device.upload_mini_stream_frame(snap_im)
+                    else:
+                        with KB7Device() as dev:
+                            dev.upload_mini_stream_frame(snap_im)
+                    self.root.after(0, lambda: self.lbl_sd_status.configure(
+                        text=f"🎞️ Auto-Mini-Stream (142×148) Frame übertragen ({time.strftime('%H:%M:%S')})", fg="#00e575"
+                    ))
+                    time.sleep(1.5)
+                else:
+                    if self.daemon and self.daemon.device:
+                        with self.daemon.lock:
+                            self.daemon.device.upload_theme(snap_im)
+                            self.daemon.device.set_active_page(3)
+                    else:
+                        with KB7Device() as dev:
+                            dev.upload_theme(snap_im)
+                            dev.set_active_page(3)
+                    self.root.after(0, lambda: self.lbl_sd_status.configure(
+                        text=f"📸 Auto-Vollbild-Snapshot übertragen ({time.strftime('%H:%M:%S')})", fg="#00e575"
+                    ))
+                    time.sleep(max(5, self.streamdeck.auto_stream_interval))
+            except Exception as e:
+                print(f"[!] Auto-stream loop warning: {e}")
+                time.sleep(3.0)
 
     def _save_streamdeck_tile(self):
         idx = self.selected_sd_slot
@@ -1866,6 +1995,19 @@ class KB7CommandCenterApp:
                         pass
                     time.sleep(1.2)
                 else:
+                    if self.active_tab == "streamdeck" and hasattr(self, "lbl_detected_stream"):
+                        try:
+                            wins = scan_stream_windows()
+                            if wins:
+                                w0 = wins[0]
+                                txt = f"● [{w0.platform}] {w0.clean_title[:45]}"
+                                col = "#00e575" if "TWITCH" in w0.platform or "OBS" in w0.platform else "#00e5ff"
+                            else:
+                                txt = "○ Kein Browser-Stream offen (nutzt Desktop-Vollbild als Quelle)"
+                                col = COLOR_TEXT_MUTED
+                            self.root.after(0, lambda t=txt, c=col: self.lbl_detected_stream.configure(text=t, fg=c))
+                        except Exception:
+                            pass
                     time.sleep(2.0)
 
         threading.Thread(target=audio_poller, daemon=True).start()
