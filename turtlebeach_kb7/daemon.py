@@ -383,12 +383,12 @@ class KB7Daemon:
                 continue
 
             event = None
-            with self.lock:
-                if self.device and self.device.touch_handle:
-                    try:
-                        event = self.device.read_touch_event(timeout_ms=50)
-                    except Exception:
-                        pass
+            dev = self.device
+            if dev and dev.touch_handle:
+                try:
+                    event = dev.read_touch_event(timeout_ms=30)
+                except Exception:
+                    pass
 
             if event:
                 self._broadcast_event(event)

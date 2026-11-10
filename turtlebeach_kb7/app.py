@@ -464,6 +464,7 @@ class KB7CommandCenterApp:
         # Radio buttons for presets
         self.theme_var = tk.StringVar(value="matrix_cyberdeck")
         theme_presets_ui = [
+            ("minecraft_hud", "💎 Minecraft ATM10 Live HUD", "Obsidian Slate, Live Diamanten & RPG Stats"),
             ("matrix_cyberdeck", "🟢 Matrix Cyberdeck", "Phosphor Green Code Rain & Terminal HUD"),
             ("toxic_radar", "🟢 Toxic Mech Radar", "Apex Tactical 360° Sonar & Honeycomb"),
             ("biohazard_reactor", "🟢 Biohazard Reactor", "Quantum Fusion Core & Radiant Plasma Conduits"),
@@ -740,20 +741,24 @@ class KB7CommandCenterApp:
     def _on_brightness_change(self, val: str):
         v = int(float(val))
         self.lbl_bri_val.configure(text=f"Brightness: {v}%")
-        if self.client and self.hw_connected:
-            try:
-                self.client.set_brightness(v)
-            except Exception:
-                pass
+        def worker():
+            if self.client and self.hw_connected:
+                try:
+                    self.client.set_brightness(v)
+                except Exception:
+                    pass
+        threading.Thread(target=worker, daemon=True).start()
 
     def _on_timeout_change(self, val: str):
         v = int(float(val))
         self.lbl_to_val.configure(text=f"Sleep Timeout: {v}s")
-        if self.client and self.hw_connected:
-            try:
-                self.client.set_timeout(v)
-            except Exception:
-                pass
+        def worker():
+            if self.client and self.hw_connected:
+                try:
+                    self.client.set_timeout(v)
+                except Exception:
+                    pass
+        threading.Thread(target=worker, daemon=True).start()
 
     def refresh_display_settings(self):
         if self.client and self.hw_connected:
@@ -783,25 +788,43 @@ class KB7CommandCenterApp:
         tk.Label(row1, text="DECK-PROFILE (12× 1x1 KLEINE KACHELN):", font=("Segoe UI", 9, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 8))
 
         deck_profiles = [
-            ("stream_media", "🎬 Stream & Companion"),
+            ("minecraft_hud", "💎 Minecraft Live (ATM10)"),
+            ("common_deck", "⚡ Common Deck"),
+            ("stream_media", "🎬 Stream & Media"),
             ("obs_creator", "🎥 OBS & Creator"),
             ("gaming_discord", "🎮 Gaming & Discord"),
-            ("mini_telemetry", "📊 12× Mini-Telemetrie"),
+            ("mini_telemetry", "📊 12× Telemetrie"),
         ]
         for prof_key, prof_lbl in deck_profiles:
             btn_p = tk.Button(
                 row1, text=prof_lbl, font=("Segoe UI", 8, "bold"),
-                bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=10, pady=4, cursor="hand2",
+                bg=COLOR_BG_HOVER, fg=COLOR_TEXT_MAIN, bd=0, padx=9, pady=4, cursor="hand2",
                 command=lambda pk=prof_key: self._load_streamdeck_profile(pk)
             )
-            btn_p.pack(side=tk.LEFT, padx=3)
+            btn_p.pack(side=tk.LEFT, padx=2)
 
-        btn_sync_hw = tk.Button(
-            row1, text="⚡ AUF KB7 SEITE 3 FLASHEN & AKTIVIEREN", font=("Segoe UI", 9, "bold"),
-            bg="#00e575", fg="#000000", activebackground="#00ff88", bd=0, padx=14, pady=4, cursor="hand2",
+        self.btn_sync_hw = tk.Button(
+            row1, text=f"⚡ AUF SEITE {self.streamdeck.target_hw_page} FLASHEN & AKTIVIEREN", font=("Segoe UI", 9, "bold"),
+            bg="#00e575", fg="#000000", activebackground="#00ff88", bd=0, padx=12, pady=4, cursor="hand2",
             command=self._sync_streamdeck_to_kb7
         )
-        btn_sync_hw.pack(side=tk.RIGHT, padx=(6, 0))
+        self.btn_sync_hw.pack(side=tk.RIGHT, padx=(6, 0))
+
+        # Target Hardware Page Selector (Page 1, 2, or 3)
+        p_frame = tk.Frame(row1, bg=COLOR_BG_CARD)
+        p_frame.pack(side=tk.RIGHT, padx=(10, 4))
+
+        tk.Label(p_frame, text="KB7 SEITE:", font=("Segoe UI", 8, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD).pack(side=tk.LEFT, padx=(0, 4))
+
+        self.var_sd_target_page = tk.IntVar(value=self.streamdeck.target_hw_page)
+        for p_val, p_lbl in [(1, "Seite 1"), (2, "Seite 2"), (3, "Seite 3")]:
+            rb_p = tk.Radiobutton(
+                p_frame, text=p_lbl, variable=self.var_sd_target_page, value=p_val,
+                font=("Segoe UI", 8, "bold"), fg=COLOR_TEXT_MAIN, bg=COLOR_BG_CARD,
+                selectcolor=COLOR_BG_DARK, activebackground=COLOR_BG_CARD,
+                command=self._on_sd_target_page_changed
+            )
+            rb_p.pack(side=tk.LEFT, padx=1)
 
         # Row 2: Live Stream Companion & Display-Streaming Bar (Twitch/YouTube/OBS Detector + Auto-Snapshot / Mini-Tile Stream)
         row_stream = tk.Frame(top_bar, bg="#10151f", bd=0, highlightthickness=1, highlightbackground=COLOR_BORDER)
@@ -910,7 +933,7 @@ class KB7CommandCenterApp:
         ).pack(side=tk.LEFT)
 
         self.lbl_sd_status = tk.Label(
-            grid_head, text="Bereit (Seite 3 • 12× 1x1 Kleine Kacheln)",
+            grid_head, text=f"Bereit (Seite {self.streamdeck.target_hw_page} • 12× 1x1 Kleine Kacheln)",
             font=("Segoe UI", 8, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG_CARD
         )
         self.lbl_sd_status.pack(side=tk.RIGHT)
@@ -1009,11 +1032,39 @@ class KB7CommandCenterApp:
         self.streamdeck.ui_tile_size = self.var_sd_ui_size.get()
         self.streamdeck.hw_small_tiles = bool(self.var_sd_hw_small.get())
         self.streamdeck.save_config()
-        self._render_streamdeck_grid()
+        self._render_streamdeck_grid(force_rebuild=True)
 
-    def _render_streamdeck_grid(self):
+    def _on_sd_target_page_changed(self):
+        self.streamdeck.target_hw_page = int(self.var_sd_target_page.get())
+        self.streamdeck.save_config()
+        if hasattr(self, "btn_sync_hw"):
+            self.btn_sync_hw.configure(text=f"⚡ AUF SEITE {self.streamdeck.target_hw_page} FLASHEN & AKTIVIEREN")
+        self.lbl_sd_status.configure(
+            text=f"Zielseite festgelegt: KB7 Seite {self.streamdeck.target_hw_page} (Bereit zum Flashen)",
+            fg=COLOR_ACCENT
+        )
+
+    def _render_streamdeck_grid(self, force_rebuild: bool = False):
+        if hasattr(self, "_sd_cells") and len(self._sd_cells) == 12 and not force_rebuild:
+            for idx, (cell, top_line, lbl_s, lbl_hw, lbl_ico, lbl_t, lbl_sub) in enumerate(self._sd_cells):
+                tile = self.streamdeck.tiles[idx]
+                is_sel = (idx == self.selected_sd_slot)
+                border_col = tile.color if is_sel else COLOR_BORDER
+                border_w = 2 if is_sel else 1
+                bg_col = "#1a2230" if is_sel else "#111620"
+                cell.configure(bg=bg_col, highlightthickness=border_w, highlightbackground=border_col)
+                top_line.configure(bg=bg_col)
+                lbl_s.configure(bg=bg_col)
+                hw_tag = "1x1" if self.streamdeck.hw_small_tiles else "2x1"
+                lbl_hw.configure(bg=bg_col, fg=tile.color, text=f"[{hw_tag}: {tile.hw_label or tile.hw_app_id}]")
+                lbl_ico.configure(bg=bg_col, fg=tile.color, text=tile.icon)
+                lbl_t.configure(bg=bg_col, text=tile.title)
+                lbl_sub.configure(bg=bg_col, text=tile.subtitle)
+            return
+
         for child in self.sd_grid_frame.winfo_children():
             child.destroy()
+        self._sd_cells = []
 
         sz = self.streamdeck.ui_tile_size
         if sz == "small":
@@ -1074,6 +1125,8 @@ class KB7CommandCenterApp:
             lbl_sub = tk.Label(cell, text=tile.subtitle, font=sub_font, fg=COLOR_TEXT_MUTED, bg=bg_col, cursor="hand2")
             lbl_sub.pack(pady=(0, 3))
 
+            self._sd_cells.append((cell, top_line, lbl_s, lbl_hw, lbl_ico, lbl_t, lbl_sub))
+
             for w in (cell, top_line, lbl_s, lbl_hw, lbl_ico, lbl_t, lbl_sub):
                 w.bind("<Button-1>", lambda e, s=idx: self._on_sd_tile_clicked(s))
 
@@ -1111,15 +1164,20 @@ class KB7CommandCenterApp:
         self._render_streamdeck_grid()
 
     def _trigger_streamdeck_slot(self, slot_index: int, from_hw: bool = False):
-        msg = self.streamdeck.execute_tile_action(
-            slot_index,
-            mixer=self.mixer,
-            steelseries=self.steelseries,
-            snapshot_callback=self._push_live_snapshot_to_kb7,
-            toggle_auto_stream_callback=self._toggle_auto_stream_loop,
-        )
-        prefix = "[KB7 Touch]" if from_hw else "[Stream Deck]"
-        self.lbl_sd_status.configure(text=f"{prefix} {msg}", fg="#00e575")
+        def worker():
+            dev = self.daemon.device if (self.daemon and self.daemon.device) else None
+            msg = self.streamdeck.execute_tile_action(
+                slot_index,
+                mixer=self.mixer,
+                steelseries=self.steelseries,
+                snapshot_callback=self._push_live_snapshot_to_kb7,
+                toggle_auto_stream_callback=self._toggle_auto_stream_loop,
+                device=dev,
+            )
+            prefix = "[KB7 Touch]" if from_hw else "[Stream Deck]"
+            self.root.after(0, lambda: self.lbl_sd_status.configure(text=f"{prefix} {msg}", fg="#00e575"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _focus_detected_stream(self):
         wins = scan_stream_windows()
@@ -1215,28 +1273,36 @@ class KB7CommandCenterApp:
     def _load_streamdeck_profile(self, profile_name: str):
         self.streamdeck.load_profile(profile_name)
         self._select_streamdeck_slot(0)
+        self._render_streamdeck_grid(force_rebuild=True)
         self._sync_streamdeck_to_kb7()
 
     def _sync_streamdeck_to_kb7(self):
-        """Flashes the 12 compact 1x1 Stream Deck tiles + custom labels to Page 3 of the KB7."""
+        """Flashes the 12 compact 1x1 Stream Deck tiles + custom labels to the target page of the KB7."""
+        target_p = int(getattr(self.streamdeck, "target_hw_page", 3))
+        page_idx = max(0, min(2, target_p - 1))
         def worker():
-            self.root.after(0, lambda: self.lbl_sd_status.configure(text="Übertrage 12× 1x1 Stream Deck Kacheln auf KB7 Seite 3...", fg=COLOR_ACCENT))
+            self.root.after(0, lambda: self.lbl_sd_status.configure(
+                text=f"Übertrage 12× 1x1 Stream Deck Kacheln auf KB7 Seite {target_p}...", fg=COLOR_ACCENT
+            ))
             try:
                 slots_cfg = self.streamdeck.to_hw_slots_config()
                 small = self.streamdeck.hw_small_tiles
                 if self.daemon and self.daemon.device:
                     with self.daemon.lock:
-                        self.daemon.device.apply_streamdeck_page(slots_cfg, page_index=2, small_tiles=small)
+                        self.daemon.device.apply_streamdeck_page(slots_cfg, page_index=page_idx, small_tiles=small)
+                        self.daemon.device.set_active_page(target_p)
                 elif self.client and self.hw_connected:
-                    self.client.apply_streamdeck(slots_cfg, page=3, small_tiles=small)
+                    self.client.apply_streamdeck(slots_cfg, page=target_p, small_tiles=small)
+                    self.client.set_page(target_p)
                 else:
                     with KB7Device() as dev:
-                        dev.apply_streamdeck_page(slots_cfg, page_index=2, small_tiles=small)
+                        dev.apply_streamdeck_page(slots_cfg, page_index=page_idx, small_tiles=small)
+                        dev.set_active_page(target_p)
 
-                self.page_var.set(3)
+                self.page_var.set(target_p)
                 self.root.after(0, self.refresh_slots_view)
                 self.root.after(0, lambda: self.lbl_sd_status.configure(
-                    text="✓ Stream Deck (12× 1x1 kleine Kacheln) aktiv auf KB7 Seite 3!", fg="#00e575"
+                    text=f"✓ Stream Deck (12× 1x1 kleine Kacheln) aktiv auf KB7 Seite {target_p}!", fg="#00e575"
                 ))
             except Exception as e:
                 self.root.after(0, lambda: self.lbl_sd_status.configure(text=f"[!] Sync-Fehler: {e}", fg=COLOR_MUTE_ACTIVE))
@@ -1306,7 +1372,7 @@ class KB7CommandCenterApp:
                     group_colors=group_colors,
                     key_offsets_rgb=key_offsets_rgb,
                 )
-            else:
+            elif self.hw_connected:
                 with KB7Device() as dev:
                     return dev.set_keyboard_lighting(
                         mode=mode,
@@ -1317,6 +1383,7 @@ class KB7CommandCenterApp:
                         group_colors=group_colors,
                         key_offsets_rgb=key_offsets_rgb,
                     )
+            return False
         except Exception as e:
             print(f"[!] Hardware lighting dispatch warning: {e}")
             return False
@@ -1833,113 +1900,125 @@ class KB7CommandCenterApp:
         selected_label = self.cb_widget_select.get()
         app_id = self._widget_id_map.get(selected_label, 0)
 
-        try:
-            if self.daemon and self.daemon.device:
-                with self.daemon.lock:
-                    self.daemon.device.assign_widget(p - 1, slot_idx, app_id)
-            elif self.client and self.hw_connected:
-                self.client.assign_widget(page=p, slot=slot_idx, app_id=app_id)
-            else:
-                with KB7Device() as dev:
-                    dev.assign_widget(p - 1, slot_idx, app_id)
+        def worker():
+            try:
+                if self.daemon and self.daemon.device:
+                    with self.daemon.lock:
+                        self.daemon.device.assign_widget(p - 1, slot_idx, app_id)
+                elif self.client and self.hw_connected:
+                    self.client.assign_widget(page=p, slot=slot_idx, app_id=app_id)
+                else:
+                    with KB7Device() as dev:
+                        dev.assign_widget(p - 1, slot_idx, app_id)
 
-            time.sleep(0.05)
-            self.refresh_slots_view()
-            messagebox.showinfo("Success", f"Widget '{selected_label}' assigned to Page {p}, Slot {slot_idx}!")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to assign widget: {e}")
+                self.refresh_slots_view()
+                self.root.after(0, lambda: messagebox.showinfo("Success", f"Widget '{selected_label}' assigned to Page {p}, Slot {slot_idx}!"))
+            except Exception as e:
+                self.root.after(0, lambda err=e: messagebox.showerror("Error", f"Failed to assign widget: {err}"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _on_page_changed(self):
         p = self.page_var.get()
-        if self.daemon and self.daemon.device:
-            try:
-                with self.daemon.lock:
-                    self.daemon.device.set_active_page(p)
-            except Exception:
-                pass
-        elif self.client and self.hw_connected:
-            try:
-                self.client.set_page(p)
-            except Exception:
-                pass
-        else:
-            try:
-                with KB7Device() as dev:
-                    dev.set_active_page(p)
-            except Exception:
-                pass
-        self.refresh_slots_view()
+        def worker():
+            if self.daemon and self.daemon.device:
+                try:
+                    with self.daemon.lock:
+                        self.daemon.device.set_active_page(p)
+                except Exception:
+                    pass
+            elif self.client and self.hw_connected:
+                try:
+                    self.client.set_page(p)
+                except Exception:
+                    pass
+            else:
+                try:
+                    with KB7Device() as dev:
+                        dev.set_active_page(p)
+                except Exception:
+                    pass
+            self.refresh_slots_view()
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _apply_template(self, tmpl_name: str):
         p = self.page_var.get()
-        try:
-            if self.daemon and self.daemon.device:
-                with self.daemon.lock:
-                    self.daemon.device.apply_template(p - 1, tmpl_name)
-            elif self.client and self.hw_connected:
-                self.client.apply_template(page=p, template_name=tmpl_name)
-            else:
-                with KB7Device() as dev:
-                    dev.apply_template(p - 1, tmpl_name)
+        def worker():
+            try:
+                if self.daemon and self.daemon.device:
+                    with self.daemon.lock:
+                        self.daemon.device.apply_template(p - 1, tmpl_name)
+                elif self.client and self.hw_connected:
+                    self.client.apply_template(page=p, template_name=tmpl_name)
+                else:
+                    with KB7Device() as dev:
+                        dev.apply_template(p - 1, tmpl_name)
 
-            time.sleep(0.05)
-            self.refresh_slots_view()
-            messagebox.showinfo("Success", f"Layout '{tmpl_name}' erfolgreich auf Seite {p} angewendet!")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to apply template: {e}")
+                time.sleep(0.05)
+                self.refresh_slots_view()
+                self.root.after(0, lambda: messagebox.showinfo("Success", f"Layout '{tmpl_name}' erfolgreich auf Seite {p} angewendet!"))
+            except Exception as e:
+                self.root.after(0, lambda err=e: messagebox.showerror("Error", f"Failed to apply template: {err}"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def refresh_slots_view(self):
-        for item in self.tree_slots.get_children():
-            self.tree_slots.delete(item)
-
         p = self.page_var.get()
-        slots = None
+        def worker():
+            slots = None
+            if self.daemon and self.daemon.device:
+                try:
+                    with self.daemon.lock:
+                        settings = self.daemon.device.get_lcd_settings()
+                        slots = []
+                        for i, (w_type, w_id) in enumerate(settings.widget_slots):
+                            p_num = (i // 12) + 1
+                            s_idx = i % 12
+                            if p_num != p:
+                                continue
+                            w_def = lookup_widget(w_id)
+                            slots.append({
+                                "slot": s_idx, "type": w_type, "app_id": w_id,
+                                "name": w_def.name, "category": w_def.category
+                            })
+                except Exception as e:
+                    print(f"[!] Error reading slots: {e}")
+            elif self.client and self.hw_connected:
+                try:
+                    slots = self.client.get_slots(page=p)
+                except Exception:
+                    pass
+            else:
+                try:
+                    with KB7Device() as dev:
+                        settings = dev.get_lcd_settings()
+                        slots = []
+                        for i, (w_type, w_id) in enumerate(settings.widget_slots):
+                            p_num = (i // 12) + 1
+                            s_idx = i % 12
+                            if p_num != p:
+                                continue
+                            w_def = lookup_widget(w_id)
+                            slots.append({
+                                "slot": s_idx, "type": w_type, "app_id": w_id,
+                                "name": w_def.name, "category": w_def.category
+                            })
+                except Exception:
+                    pass
 
-        if self.daemon and self.daemon.device:
-            try:
-                with self.daemon.lock:
-                    settings = self.daemon.device.get_lcd_settings()
-                    slots = []
-                    for i, (w_type, w_id) in enumerate(settings.widget_slots):
-                        p_num = (i // 12) + 1
-                        s_idx = i % 12
-                        if p_num != p:
-                            continue
-                        w_def = lookup_widget(w_id)
-                        slots.append({
-                            "slot": s_idx, "type": w_type, "app_id": w_id,
-                            "name": w_def.name, "category": w_def.category
-                        })
-            except Exception as e:
-                print(f"[!] Error reading slots: {e}")
-        elif self.client and self.hw_connected:
-            try:
-                slots = self.client.get_slots(page=p)
-            except Exception:
-                pass
-        else:
-            try:
-                with KB7Device() as dev:
-                    settings = dev.get_lcd_settings()
-                    slots = []
-                    for i, (w_type, w_id) in enumerate(settings.widget_slots):
-                        p_num = (i // 12) + 1
-                        s_idx = i % 12
-                        if p_num != p:
-                            continue
-                        w_def = lookup_widget(w_id)
-                        slots.append({
-                            "slot": s_idx, "type": w_type, "app_id": w_id,
-                            "name": w_def.name, "category": w_def.category
-                        })
-            except Exception:
-                pass
+            def update_ui():
+                for item in self.tree_slots.get_children():
+                    self.tree_slots.delete(item)
+                if slots:
+                    for s in slots:
+                        self.tree_slots.insert("", tk.END, values=(
+                            f"Slot {s['slot']}", s["type"], s["app_id"], s["name"], s["category"]
+                        ))
 
-        if slots:
-            for s in slots:
-                self.tree_slots.insert("", tk.END, values=(
-                    f"Slot {s['slot']}", s["type"], s["app_id"], s["name"], s["category"]
-                ))
+            self.root.after(0, update_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # =========================================================================
     # TAB 4: HARDWARE & TOUCH LOGS
@@ -2004,6 +2083,11 @@ class KB7CommandCenterApp:
                 else:
                     if self.active_tab == "streamdeck" and hasattr(self, "lbl_detected_stream"):
                         try:
+                            # Live refresh for Minecraft Live HUD profile
+                            if self.streamdeck.active_profile == "minecraft_hud":
+                                if self.streamdeck.refresh_from_minecraft():
+                                    self.root.after(0, self._render_streamdeck_grid)
+
                             wins = scan_stream_windows()
                             if wins:
                                 w0 = wins[0]
@@ -2015,7 +2099,12 @@ class KB7CommandCenterApp:
                             self.root.after(0, lambda t=txt, c=col: self.lbl_detected_stream.configure(text=t, fg=c))
                         except Exception:
                             pass
-                    time.sleep(2.0)
+                    elif self.streamdeck.active_profile == "minecraft_hud":
+                        try:
+                            self.streamdeck.refresh_from_minecraft()
+                        except Exception:
+                            pass
+                    time.sleep(1.0)
 
         threading.Thread(target=audio_poller, daemon=True).start()
 

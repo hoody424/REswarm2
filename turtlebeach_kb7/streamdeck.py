@@ -81,16 +81,34 @@ STREAMDECK_ACTIONS: Dict[str, Dict[str, str]] = {
     "hotkey_scene2":       {"name": "🎮 OBS: Szene 2 - Game (Ctrl+Alt+F2)", "cat": "OBS Studio"},
     "hotkey_scene3":       {"name": "☕ OBS: Szene 3 - BRB (Ctrl+Alt+F3)", "cat": "OBS Studio"},
     "hotkey_screenshot":   {"name": "✂ Screenshot: Snipping Tool (Win+Shift+S)", "cat": "System"},
+    "hotkey_clipboard":    {"name": "📋 System: Zwischenablageverlauf (Win+V)", "cat": "System"},
+    "show_desktop":        {"name": "🖥 System: Desktop anzeigen (Win+D)", "cat": "System"},
     "open_taskmgr":        {"name": "📊 System: Task-Manager öffnen", "cat": "System"},
     "open_calc":           {"name": "🧮 System: Taschenrechner öffnen", "cat": "System"},
     "open_explorer":       {"name": "📁 System: Datei-Explorer öffnen", "cat": "System"},
+    "open_terminal":       {"name": "💻 System: Windows Terminal / PowerShell", "cat": "System"},
     "lock_pc":             {"name": "🔒 System: PC sperren (Win+L)", "cat": "System"},
+    "switch_hw_page":      {"name": "📄 KB7: Display-Seite weiterschalten (1→2→3)", "cat": "Hardware"},
     "none":                {"name": "ℹ Nur Hardware-Kachel / Telemetrie", "cat": "Hardware"},
 }
 
 
-# 4 Pre-built 12-Slot Profiles using compact 1x1 hardware tiles
+# Pre-built 12-Slot Profiles using compact 1x1 hardware tiles
 STREAMDECK_PROFILES: Dict[str, List[StreamDeckTile]] = {
+    "common_deck": [
+        StreamDeckTile(0,  "⏯", "PLAY / PAUSE", "Universal Media",  "#00e575", "media_play_pause",    35,   "PLAY/PAUSE", 0x00, (0, 255, 117)),
+        StreamDeckTile(1,  "⏭", "NEXT TRACK",  "Nächster Song",    "#00e5ff", "media_next",          36,   "NEXT TRACK", 0x00, (0, 229, 255)),
+        StreamDeckTile(2,  "🎙", "MIC MUTE",     "Mikrofon Mute",    "#ff5252", "mic_mute",            30,   "MIC MUTE",   0x00, (255, 82, 82)),
+        StreamDeckTile(3,  "🔇", "VOL MUTE",     "Master Ton Mute",  "#ff4081", "audio_mute",          29,   "VOL MUTE",   0x00, (255, 64, 129)),
+        StreamDeckTile(4,  "💬", "DISCORD MUTE", "Ctrl+Shift+M",     "#5865f2", "hotkey_discord_mute", 17,   "DISC MUTE",  0x00, (88, 101, 242)),
+        StreamDeckTile(5,  "🎧", "DISC DEAFEN",  "Ctrl+Shift+D",     "#5865f2", "hotkey_discord_deaf", 18,   "DISC DEAF",  0x00, (88, 101, 242)),
+        StreamDeckTile(6,  "🎬", "CLIP 30s",     "Alt+F10 Replay",   "#ffab00", "hotkey_clip",         14,   "CLIP 30S",   0x00, (255, 171, 0)),
+        StreamDeckTile(7,  "✂", "SCREENSHOT",   "Win+Shift+S Snip", "#00e5ff", "hotkey_screenshot",   26,   "SCREENSHOT", 0x00, (0, 229, 255)),
+        StreamDeckTile(8,  "🎯", "STREAM FOKUS", "1-Klick Fokus",    "#a020f0", "focus_stream",        12,   "STRM FOCUS", 0x00, (160, 32, 240)),
+        StreamDeckTile(9,  "📋", "CLIPBOARD",    "Win+V Historie",   "#00b8d4", "hotkey_clipboard",    15,   "CLIPBOARD",  0x00, (0, 184, 212)),
+        StreamDeckTile(10, "📊", "CPU LOAD",     "1x1 Telemetrie",   "#00e575", "open_taskmgr",        1008, "CPU LOAD",   0x00, (0, 229, 117)),
+        StreamDeckTile(11, "🔒", "LOCK PC",      "Win+L Sperren",    "#ff1e32", "lock_pc",             28,   "LOCK PC",    0x00, (255, 30, 50)),
+    ],
     "stream_media": [
         StreamDeckTile(0,  "⏯", "PLAY / PAUSE", "Stream / Video",   "#00e575", "media_play_pause",    35,   "PLAY/PAUSE", 0x00, (0, 255, 117)),
         StreamDeckTile(1,  "🎯", "STREAM FOKUS", "Fensterwechsel",   "#00e5ff", "focus_stream",        12,   "STRM FOCUS", 0x00, (0, 229, 255)),
@@ -146,6 +164,20 @@ STREAMDECK_PROFILES: Dict[str, List[StreamDeckTile]] = {
         StreamDeckTile(9,  "🔇", "VOL MUTE",     "1x1 Audio",        "#ff4081", "audio_mute",          29,   "VOL MUTE",   0x00, (255, 64, 129)),
         StreamDeckTile(10, "🎙", "MIC MUTE",     "1x1 Audio",        "#ff4081", "mic_mute",            30,   "MIC MUTE",   0x00, (255, 64, 129)),
         StreamDeckTile(11, "📈", "TASK MANAGER", "1x1 System",       "#ffab00", "open_taskmgr",        27,   "TASKMGR",    0x00, (255, 171, 0)),
+    ],
+    "minecraft_hud": [
+        StreamDeckTile(0,  "💎", "DIAMONDS: 0",  "Inventar Zähler",   "#00e5ff", "none",                12,   "DIAMONDS",   0x00, (0, 229, 255)),
+        StreamDeckTile(1,  "🪙", "ATM / ORES",   "Endgame Metalle",  "#ffb800", "none",                13,   "ALLOY/ATM",  0x00, (255, 184, 0)),
+        StreamDeckTile(2,  "❤️", "HP: 20/20",     "100% Leben",       "#00e575", "none",                14,   "HEALTH",     0x00, (0, 229, 117)),
+        StreamDeckTile(3,  "🛡️", "ARMOR: 0",     "Schutzwert",       "#00e5ff", "none",                15,   "ARMOR",      0x00, (0, 229, 255)),
+        StreamDeckTile(4,  "✨", "XP: LVL 0",    "Fortschritt",      "#00ff66", "none",                16,   "XP LEVEL",   0x00, (0, 255, 102)),
+        StreamDeckTile(5,  "🧭", "COORDS: 0, 0", "X, Y, Z Pos",      "#00e575", "hotkey_clipboard",    17,   "COORDS",     0x00, (0, 229, 117)),
+        StreamDeckTile(6,  "🌍", "OVERWORLD",    "Dimension",        "#a020f0", "none",                18,   "DIMENSION",  0x00, (160, 32, 240)),
+        StreamDeckTile(7,  "⚔️", "TOOL DUR: 100%","Haupthand",        "#ffab00", "none",                19,   "TOOL DUR",   0x00, (255, 171, 0)),
+        StreamDeckTile(8,  "🍖", "HUNGER: 20/20","Food & Saturation","#ff9100", "none",                20,   "HUNGER",     0x00, (255, 145, 0)),
+        StreamDeckTile(9,  "📸", "SCREENSHOT",   "Win+Shift+S / F2", "#00e5ff", "hotkey_screenshot",   26,   "SCREENSHOT", 0x00, (0, 229, 255)),
+        StreamDeckTile(10, "🎙️", "DISC MUTE",    "Ctrl+Shift+M",     "#5865f2", "hotkey_discord_mute", 21,   "DISC MUTE",  0x00, (88, 101, 242)),
+        StreamDeckTile(11, "⚡", "RAPID TRG",    "Hall-Effekt Speed","#00e5ff", "none",                3005, "RAPID TRG",  0x00, (0, 229, 255)),
     ],
 }
 
@@ -334,22 +366,26 @@ class SmartStreamDeckManager:
     """
 
     def __init__(self) -> None:
-        self.active_profile: str = "stream_media"
+        self.active_profile: str = "common_deck"
         self.ui_tile_size: str = "small"      # "small" (Kompakt), "medium", "large"
         self.hw_small_tiles: bool = True      # True = 1x1 small tiles (all 12 visible), False = 2x1 large tiles
-        self.target_hw_page: int = 3          # Page 3 (index 2) on KB7 display
+        self.target_hw_page: int = 3          # Target Hardware Page (1, 2, or 3) on KB7 display
         self.auto_stream_enabled: bool = False
         self.auto_stream_mode: str = "mini"   # "mini" (142x148 Slot 0x40 fast) or "full" (480x800 Slot 0x00)
         self.auto_stream_interval: int = 10   # Seconds between snapshots in full mode
         self.tiles: List[StreamDeckTile] = [
-            StreamDeckTile(**asdict(t)) for t in STREAMDECK_PROFILES["stream_media"]
+            StreamDeckTile(**asdict(t)) for t in STREAMDECK_PROFILES["common_deck"]
         ]
         self.load_config()
 
     def load_profile(self, profile_name: str) -> List[StreamDeckTile]:
         if profile_name in STREAMDECK_PROFILES:
             self.active_profile = profile_name
-            self.tiles = [StreamDeckTile(**asdict(t)) for t in STREAMDECK_PROFILES[profile_name]]
+            if profile_name == "minecraft_hud":
+                if not self.refresh_from_minecraft():
+                    self.tiles = [StreamDeckTile(**asdict(t)) for t in STREAMDECK_PROFILES[profile_name]]
+            else:
+                self.tiles = [StreamDeckTile(**asdict(t)) for t in STREAMDECK_PROFILES[profile_name]]
             self.save_config()
         return self.tiles
 
@@ -401,6 +437,21 @@ class SmartStreamDeckManager:
             for t in self.tiles
         ]
 
+    def refresh_from_minecraft(self) -> bool:
+        """
+        If the active profile is 'minecraft_hud', refreshes the 12 tiles dynamically
+        from live Minecraft telemetry (~/.kb7_minecraft_stats.json).
+        """
+        if self.active_profile != "minecraft_hud":
+            return False
+        try:
+            from .minecraft import load_minecraft_stats, generate_minecraft_tiles
+            stats = load_minecraft_stats()
+            self.tiles = generate_minecraft_tiles(stats)
+            return True
+        except Exception:
+            return False
+
     def execute_tile_action(
         self,
         slot_index: int,
@@ -408,6 +459,7 @@ class SmartStreamDeckManager:
         steelseries=None,
         snapshot_callback: Optional[Callable[[], None]] = None,
         toggle_auto_stream_callback: Optional[Callable[[], None]] = None,
+        device=None,
     ) -> str:
         """
         Execute the Smart Action assigned to `slot_index` (`0..11`) and return a status message.
@@ -534,6 +586,28 @@ class SmartStreamDeckManager:
         elif act == "hotkey_screenshot":
             _send_vk_combo(VK_LWIN, VK_SHIFT, ord("S"))
             return "✂ Screenshot Snipping Tool (Win+Shift+S) geöffnet"
+        elif act == "hotkey_clipboard":
+            _send_vk_combo(VK_LWIN, ord("V"))
+            return "📋 Zwischenablageverlauf (Win+V) geöffnet"
+        elif act == "show_desktop":
+            _send_vk_combo(VK_LWIN, ord("D"))
+            return "🖥 Desktop anzeigen (Win+D) umgeschaltet"
+        elif act == "open_terminal":
+            try:
+                subprocess.Popen(["wt.exe"], shell=False)
+            except Exception:
+                subprocess.Popen(["powershell.exe"], shell=False)
+            return "💻 Windows Terminal / PowerShell geöffnet"
+        elif act == "switch_hw_page":
+            if device:
+                try:
+                    cur_p = getattr(device, "_active_page", 1)
+                    next_p = 1 if cur_p >= 3 else cur_p + 1
+                    device.set_active_page(next_p)
+                    return f"📄 KB7 LCD auf Seite {next_p} umgeschaltet"
+                except Exception as e:
+                    return f"📄 Seitenwechsel Fehler: {e}"
+            return "📄 Display-Seite weitergeschaltet"
         elif act == "stream_snapshot":
             if snapshot_callback:
                 snapshot_callback()

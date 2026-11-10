@@ -11,6 +11,7 @@ a = Analysis(
         'turtlebeach_kb7.lighting',
         'turtlebeach_kb7.steelseries',
         'turtlebeach_kb7.theme_generator',
+        'turtlebeach_kb7.minecraft',
         'turtlebeach_kb7.win_hid',
     ],
     hookspath=[],

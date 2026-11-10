@@ -51,6 +51,9 @@ def generate_theme(
         hi = _render_stealth_carbon(rw, rh)
     elif name in ("supernova_core", "neon_cyberpunk"):
         hi = _render_supernova_core(rw, rh)
+    elif name == "minecraft_hud":
+        from .minecraft import render_minecraft_hud_canvas
+        return render_minecraft_hud_canvas(None, width=width, height=height)
     else:
         raise ValueError(f"Unknown theme name: {name}")
 
@@ -58,6 +61,7 @@ def generate_theme(
 
 
 THEME_PRESETS = {
+    "minecraft_hud": lambda: generate_theme("minecraft_hud"),
     "emerald_synthwave": lambda: generate_theme("emerald_synthwave"),
     "matrix_cyberdeck": lambda: generate_theme("matrix_cyberdeck"),
     "toxic_radar": lambda: generate_theme("toxic_radar"),

@@ -37,10 +37,18 @@ COLOR_PALETTES: List[Tuple[str, str, str, str]] = [
     ("👑 Royal Gold & Onyx", "#FFB800", "#FF5500", "#FFFFFF"),
     ("❄️ Arctic Glacier", "#00E5FF", "#0055FF", "#FFFFFF"),
     ("🩸 Crimson Vampyr", "#FF0022", "#8800FF", "#FF8800"),
+    ("💎 Minecraft Diamond & Gold", "#00E5FF", "#FFB800", "#00FF66"),
 ]
 
 # Complete catalog of customizable lighting effects
 LIGHTING_EFFECTS: Dict[str, Dict[str, object]] = {
+    "minecraft_reactive": {
+        "name": "💎 Minecraft Reaktiv (Live HP Alert & Diamant Sync)",
+        "category": "Dynamisch (KB7 + Maus Sync)",
+        "desc": "Fließender Diamant-Gold-Glow. Bei kritischem Leben (<30% HP) sofortiger roter Puls-Alarm!",
+        "dynamic": True,
+        "hw_mode": 7,
+    },
     "cyber_wave": {
         "name": "🌊 3-Farb Cyber-Welle (Animierter Flow)",
         "category": "Dynamisch (KB7 + Maus Sync)",
@@ -315,7 +323,31 @@ class LightingEngine:
         hw_mode = int(meta.get("hw_mode", 7))
         key_offsets: Dict[int, Tuple[int, int, int]] = {}
 
-        if self.effect_id == "static_gradient":
+        if self.effect_id == "minecraft_reactive":
+            # Minecraft ATM10 Dynamic Reactive Lighting
+            # Normal: Diamond Cyan (#00E5FF) + Obsidian Gold (#FFB800) + XP Green (#00FF66)
+            # Critical Health (<30% HP): Fast Crimson Red Heartbeat Pulse!
+            from .minecraft import load_minecraft_stats
+            mc_stats = load_minecraft_stats()
+            is_low = mc_stats.is_low_health if mc_stats else False
+            if is_low:
+                # Fast urgent red pulse (frequency 3Hz)
+                pulse = (math.sin(phase * 6.0 * math.pi) + 1.0) * 0.5
+                red_alert = (int(120 + 135 * pulse), 0, int(15 * pulse))
+                groups = [red_alert] * 7
+                for off in ZONE_WASD:
+                    key_offsets[off] = (255, 255, 255)
+                mouse_rgb = red_alert
+            else:
+                # Flowing Diamond Cyan to Gold with XP green WASD
+                groups = [sample_3color_cycle(c1, c2, c3, phase + (i / 7.0)) for i in range(7)]
+                for off in ZONE_WASD:
+                    key_offsets[off] = c3
+                for off in ZONE_UNDERGLOW:
+                    key_offsets[off] = c2
+                mouse_rgb = c1
+
+        elif self.effect_id == "static_gradient":
             groups = [sample_3color_gradient(c1, c2, c3, i / 6.0) for i in range(7)]
             mouse_rgb = c2
 

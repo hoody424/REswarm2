@@ -26,6 +26,7 @@ THEME_RGB_MAP: Dict[str, Tuple[int, int, int]] = {
     "tactical_hud": (0, 229, 255),         # Cyberpunk Cyan
     "audiophile_dark": (230, 165, 30),     # Studio Gold
     "neon_cyberpunk": (255, 0, 128),       # Neon Magenta
+    "minecraft_hud": (0, 229, 255),        # Diamond Cyan
 }
 
 
@@ -37,6 +38,9 @@ class SteelSeriesSync:
         self.connected = False
         self.running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._worker_thread: Optional[threading.Thread] = None
+        self._target_rgb: Optional[Tuple[int, int, int]] = None
+        self._rgb_event = threading.Event()
         self.current_rgb: Tuple[int, int, int] = (0, 255, 102)
         self.auto_sync_theme = True
 
@@ -98,9 +102,12 @@ class SteelSeriesSync:
             self.connected = True
             self.running = True
 
-            # 3. Start background heartbeat thread (every 6 seconds)
+            # 3. Start background heartbeat and worker threads
             self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
             self._heartbeat_thread.start()
+            if not self._worker_thread or not self._worker_thread.is_alive():
+                self._worker_thread = threading.Thread(target=self._rgb_worker, daemon=True)
+                self._worker_thread.start()
 
             print(f"[+] SteelSeries GameSense connected at {self.address}")
             return True
@@ -108,6 +115,29 @@ class SteelSeriesSync:
             print(f"[!] SteelSeries GameSense start failed: {e}")
             self.connected = False
             return False
+
+    def _rgb_worker(self):
+        """Asynchronous worker loop that pushes RGB updates without blocking callers."""
+        while self.running:
+            self._rgb_event.wait(timeout=1.0)
+            if not self.running:
+                break
+            target = self._target_rgb
+            self._rgb_event.clear()
+            if target is None:
+                continue
+            r, g, b = target
+            try:
+                self._bind_mouse_event(r, g, b)
+                event_payload = {
+                    "game": GAME_NAME,
+                    "event": "SYNC_RGB",
+                    "data": {"value": 100}
+                }
+                self._post("/game_event", event_payload)
+            except Exception as e:
+                print(f"[!] Failed to set SteelSeries RGB: {e}")
+            time.sleep(0.03)
 
     def _bind_mouse_event(self, r: int, g: int, b: int):
         """Binds RGB color handler for mouse zones."""
@@ -126,24 +156,13 @@ class SteelSeriesSync:
         self._post("/bind_game_event", bind_payload)
 
     def set_color(self, r: int, g: int, b: int) -> bool:
-        """Sets SteelSeries mouse LED illumination to RGB color."""
+        """Sets SteelSeries mouse LED illumination to RGB color asynchronously without blocking."""
         self.current_rgb = (r, g, b)
-        if not self.connected:
-            if not self.start():
-                return False
-
-        try:
-            self._bind_mouse_event(r, g, b)
-            event_payload = {
-                "game": GAME_NAME,
-                "event": "SYNC_RGB",
-                "data": {"value": 100}
-            }
-            self._post("/game_event", event_payload)
-            return True
-        except Exception as e:
-            print(f"[!] Failed to set SteelSeries RGB: {e}")
-            return False
+        self._target_rgb = (r, g, b)
+        if not self.connected and not self.running:
+            threading.Thread(target=self.start, daemon=True).start()
+        self._rgb_event.set()
+        return True
 
     def sync_theme(self, theme_name: str) -> bool:
         """Syncs mouse RGB with the signature color of a theme preset."""
@@ -166,7 +185,7 @@ class SteelSeriesSync:
         url = f"{self.address}{endpoint}"
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
+        with urllib.request.urlopen(req, timeout=0.6) as resp:
             raw = resp.read()
             return json.loads(raw.decode("utf-8")) if raw else {}
 
